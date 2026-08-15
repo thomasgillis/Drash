@@ -60,7 +60,10 @@ struct PlacesView: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     Text(location.displayName).foregroundStyle(.primary)
-                                    Text(String(format: "%.3f, %.3f", location.latitude, location.longitude))
+                                    Text(
+                                        "Daily \(location.forecastModel.shortName) · "
+                                            + String(format: "%.3f, %.3f", location.latitude, location.longitude)
+                                    )
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()

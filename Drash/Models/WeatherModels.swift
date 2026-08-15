@@ -1,6 +1,34 @@
 import Foundation
 import CoreLocation
 
+enum ForecastModel: String, CaseIterable, Codable, Identifiable, Sendable {
+    case nws
+    case hrrr
+
+    var id: String { rawValue }
+
+    var shortName: String {
+        switch self {
+        case .nws: return "NWS"
+        case .hrrr: return "HRRR"
+        }
+    }
+
+    var loadingDescription: String {
+        switch self {
+        case .nws: return "Loading NWS and HRRR forecasts…"
+        case .hrrr: return "Loading HRRR forecast…"
+        }
+    }
+
+    var forecastAttribution: String {
+        switch self {
+        case .nws: return "Forecast from the National Weather Service"
+        case .hrrr: return "NOAA HRRR forecast via Open-Meteo"
+        }
+    }
+}
+
 struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
     let id: UUID
     var name: String
@@ -8,6 +36,7 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
     var latitude: Double
     var longitude: Double
     var isCurrentLocation: Bool
+    var forecastModel: ForecastModel
 
     init(
         id: UUID = UUID(),
@@ -15,7 +44,8 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         state: String? = nil,
         latitude: Double,
         longitude: Double,
-        isCurrentLocation: Bool = false
+        isCurrentLocation: Bool = false,
+        forecastModel: ForecastModel = .hrrr
     ) {
         self.id = id
         self.name = name
@@ -23,6 +53,7 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         self.latitude = latitude
         self.longitude = longitude
         self.isCurrentLocation = isCurrentLocation
+        self.forecastModel = forecastModel
     }
 
     var coordinate: CLLocationCoordinate2D {
@@ -32,6 +63,27 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
     var displayName: String {
         guard let state, !state.isEmpty else { return name }
         return "\(name), \(state)"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case state
+        case latitude
+        case longitude
+        case isCurrentLocation
+        case forecastModel
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        state = try container.decodeIfPresent(String.self, forKey: .state)
+        latitude = try container.decode(Double.self, forKey: .latitude)
+        longitude = try container.decode(Double.self, forKey: .longitude)
+        isCurrentLocation = try container.decode(Bool.self, forKey: .isCurrentLocation)
+        forecastModel = try container.decodeIfPresent(ForecastModel.self, forKey: .forecastModel) ?? .hrrr
     }
 }
 
@@ -46,8 +98,12 @@ struct WeatherSnapshot: Codable, Sendable {
     let station: ObservationStation?
     let alerts: [WeatherAlert]
     let alertsUnavailable: Bool?
+    let hourlyForecastModel: ForecastModel?
 
     var alertsAreAvailable: Bool { alertsUnavailable != true }
+    var effectiveHourlyForecastModel: ForecastModel {
+        hourlyForecastModel ?? location.forecastModel
+    }
 }
 
 struct PrecipitationAmount: Codable, Identifiable, Hashable, Sendable {
@@ -61,6 +117,12 @@ struct PrecipitationAmount: Codable, Identifiable, Hashable, Sendable {
     let millimeters: Double
 
     var id: Date { startTime }
+
+    init(startTime: Date, endTime: Date, millimeters: Double) {
+        self.startTime = startTime
+        self.endTime = endTime
+        self.millimeters = max(0, millimeters)
+    }
 
     init?(validTime: String, millimeters: Double?) {
         guard let millimeters,

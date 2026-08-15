@@ -38,25 +38,25 @@ struct ForecastView: View {
                                     AlertAvailabilityBanner()
                                 }
 
-                                HourlyStrip(
-                                    title: "Next 24 hours",
-                                    periods: Array(snapshot.hourly.prefix(24)),
-                                    unit: model.temperatureUnit
-                                )
-                                MeteogramCard(
+                                HourlyForecastCard(
                                     periods: Array(snapshot.hourly.prefix(24)),
                                     precipitationAmounts: snapshot.precipitationAmounts ?? [],
-                                    unit: model.temperatureUnit
+                                    unit: model.temperatureUnit,
+                                    forecastModel: snapshot.effectiveHourlyForecastModel
                                 )
                                 DailyForecastCard(
                                     periods: snapshot.daily,
                                     hourlyPeriods: snapshot.hourly,
                                     precipitationAmounts: snapshot.precipitationAmounts ?? [],
-                                    unit: model.temperatureUnit
+                                    unit: model.temperatureUnit,
+                                    forecastModel: snapshot.location.forecastModel,
+                                    selectedForecastModel: model.selectedForecastModel,
+                                    isLoading: model.isLoading,
+                                    onSelectForecastModel: model.selectForecastModel
                                 )
                                 ConditionsGrid(snapshot: snapshot, unit: model.temperatureUnit)
 
-                                Text("Forecast from the National Weather Service")
+                                Text(forecastAttribution(for: snapshot))
                                     .font(.caption)
                                     .foregroundStyle(ForecastPalette.secondary)
                                     .padding(.vertical, 10)
@@ -77,7 +77,7 @@ struct ForecastView: View {
                     }
                 }
             } else if model.isLoading {
-                ProgressView("Loading National Weather Service data…")
+                ProgressView(model.selectedForecastModel.loadingDescription)
                     .tint(ForecastPalette.blue)
                     .foregroundStyle(ForecastPalette.ink)
             } else {
@@ -139,6 +139,14 @@ struct ForecastView: View {
               let displayed = model.snapshot?.location else { return false }
         return abs(selected.latitude - displayed.latitude) >= 0.001
             || abs(selected.longitude - displayed.longitude) >= 0.001
+    }
+
+    private func forecastAttribution(for snapshot: WeatherSnapshot) -> String {
+        if snapshot.effectiveHourlyForecastModel == .hrrr,
+           snapshot.location.forecastModel == .nws {
+            return "24-hour NOAA HRRR via Open-Meteo · Daily forecast from NWS"
+        }
+        return snapshot.location.forecastModel.forecastAttribution
     }
 }
 
@@ -250,11 +258,15 @@ private struct HourlyStrip: View {
     let title: String
     let periods: [ForecastPeriod]
     let unit: TemperatureUnit
+    var showsHeader = true
+    var usesCardBackground = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: "clock")
-                .font(.headline)
+            if showsHeader {
+                Label(title, systemImage: "clock")
+                    .font(.headline)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 18) {
                     ForEach(periods) { period in
@@ -283,6 +295,82 @@ private struct HourlyStrip: View {
         }
         .foregroundStyle(ForecastPalette.ink)
         .padding()
+        .modifier(OptionalGlassCard(enabled: usesCardBackground))
+    }
+}
+
+private struct OptionalGlassCard: ViewModifier {
+    let enabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.glassCard()
+        } else {
+            content
+        }
+    }
+}
+
+private struct HourlyForecastCard: View {
+    let periods: [ForecastPeriod]
+    let precipitationAmounts: [PrecipitationAmount]
+    let unit: TemperatureUnit
+    let forecastModel: ForecastModel
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.3)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack {
+                    Label("Next 24 hours · \(forecastModel.shortName)", systemImage: "clock")
+                        .font(.headline)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(ForecastPalette.secondary.opacity(0.7))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Next 24 hours · \(forecastModel.shortName)")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(isExpanded ? "Collapses the 24-hour forecast" : "Expands the 24-hour forecast")
+
+            HourlyStrip(
+                title: "",
+                periods: periods,
+                unit: unit,
+                showsHeader: false,
+                usesCardBackground: false
+            )
+
+            if isExpanded {
+                Divider()
+                    .overlay(ForecastPalette.grid)
+                    .padding(.horizontal)
+
+                VStack {
+                    MeteogramCard(
+                        periods: periods,
+                        precipitationAmounts: precipitationAmounts,
+                        unit: unit,
+                        forecastModel: forecastModel,
+                        usesCardBackground: false
+                    )
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .foregroundStyle(ForecastPalette.ink)
         .glassCard()
     }
 }
@@ -291,6 +379,8 @@ private struct MeteogramCard: View {
     let periods: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
+    let forecastModel: ForecastModel
+    let usesCardBackground: Bool
     private let derivedData: MeteogramDerivedData
     @State private var selectedTime: Date?
     @State private var selectionDismissTask: Task<Void, Never>?
@@ -298,11 +388,15 @@ private struct MeteogramCard: View {
     init(
         periods: [ForecastPeriod],
         precipitationAmounts: [PrecipitationAmount],
-        unit: TemperatureUnit
+        unit: TemperatureUnit,
+        forecastModel: ForecastModel,
+        usesCardBackground: Bool = true
     ) {
         self.periods = periods
         self.precipitationAmounts = precipitationAmounts
         self.unit = unit
+        self.forecastModel = forecastModel
+        self.usesCardBackground = usesCardBackground
         derivedData = MeteogramDerivedData(
             periods: periods,
             precipitationAmounts: precipitationAmounts,
@@ -312,8 +406,15 @@ private struct MeteogramCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("24-hour forecast", systemImage: "chart.xyaxis.line")
-                .font(.headline)
+            HStack {
+                Label("24-hour forecast", systemImage: "chart.xyaxis.line")
+                    .font(.headline)
+                Spacer()
+                Text("\(forecastModel.shortName) · automatic")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(ForecastPalette.blue)
+                    .accessibilityIdentifier("hourly-forecast-model")
+            }
 
             HStack(spacing: 18) {
                 Label {
@@ -489,7 +590,7 @@ private struct MeteogramCard: View {
         }
         .foregroundStyle(ForecastPalette.ink)
         .padding()
-        .glassCard()
+        .modifier(OptionalGlassCard(enabled: usesCardBackground))
         .onDisappear { selectionDismissTask?.cancel() }
     }
 
@@ -813,7 +914,7 @@ private struct PrecipitationDetail: View {
                 Label("Precipitation detail", systemImage: "drop.circle.fill")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("NWS forecast blocks")
+                Text("Hourly model totals")
                     .font(.caption2)
                     .foregroundStyle(ForecastPalette.secondary)
             }
@@ -890,11 +991,39 @@ private struct DailyForecastCard: View {
     let hourlyPeriods: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
+    let forecastModel: ForecastModel
+    let selectedForecastModel: ForecastModel
+    let isLoading: Bool
+    let onSelectForecastModel: (ForecastModel) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label("7-day forecast", systemImage: "calendar")
-                .font(.headline).padding(.bottom, 10)
+            HStack {
+                Label(forecastHeading, systemImage: "calendar")
+                    .font(.headline)
+                Spacer()
+                if isLoading, selectedForecastModel != forecastModel {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Loading \(selectedForecastModel.shortName) daily forecast")
+                }
+            }
+            .padding(.bottom, 10)
+
+            Picker(
+                "Daily forecast model",
+                selection: Binding(
+                    get: { selectedForecastModel },
+                    set: onSelectForecastModel
+                )
+            ) {
+                ForEach(ForecastModel.allCases) { model in
+                    Text(model.shortName).tag(model)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.bottom, 12)
+
             ForEach(Array(dailyRows.enumerated()), id: \.element.id) { index, row in
                 NavigationLink {
                     DayForecastDetailView(
@@ -905,7 +1034,8 @@ private struct DailyForecastCard: View {
                         precipitationAmounts: precipitationAmounts.filter {
                             $0.endTime > row.startTime && $0.startTime < row.endTime
                         },
-                        unit: unit
+                        unit: unit,
+                        forecastModel: forecastModel
                     )
                 } label: {
                     HStack(alignment: .center, spacing: 10) {
@@ -966,6 +1096,12 @@ private struct DailyForecastCard: View {
 
         return rows
     }
+
+    private var forecastHeading: String {
+        guard forecastModel == .hrrr else { return "7-day forecast" }
+        let count = dailyRows.count
+        return "\(count)-day HRRR forecast"
+    }
 }
 
 private struct DailyForecastRow: Identifiable {
@@ -1000,6 +1136,7 @@ private struct DayForecastDetailView: View {
     let hourlyPeriods: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
+    let forecastModel: ForecastModel
 
     var body: some View {
         ZStack {
@@ -1044,7 +1181,7 @@ private struct DayForecastDetailView: View {
                         .glassCard()
                     }
 
-                    Text("Forecast from the National Weather Service")
+                    Text(forecastModel.forecastAttribution)
                         .font(.caption)
                         .foregroundStyle(ForecastPalette.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)

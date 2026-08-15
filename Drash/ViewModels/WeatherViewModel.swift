@@ -19,7 +19,7 @@ final class WeatherViewModel: ObservableObject {
         didSet { persistSelectedLocation() }
     }
 
-    private let client: NWSClient
+    private let client: WeatherClient
     private let store: SnapshotStore
     private var loadTask: Task<Void, Never>?
     private var loadingLocation: WeatherLocation?
@@ -37,7 +37,7 @@ final class WeatherViewModel: ObservableObject {
         static let selectedLocation = "selectedLocation"
     }
 
-    init(client: NWSClient = .shared, store: SnapshotStore = .shared) {
+    init(client: WeatherClient = .shared, store: SnapshotStore = .shared) {
         self.client = client
         self.store = store
         temperatureUnit = TemperatureUnit(
@@ -63,10 +63,12 @@ final class WeatherViewModel: ObservableObject {
         didRestoreLastSession = true
 
         var restoredMatchingSnapshot = false
+        var requiresHRRRRefresh = false
         if let cached = await store.load() {
             let cachedSnapshot = cached.snapshot
+            requiresHRRRRefresh = cachedSnapshot.effectiveHourlyForecastModel != .hrrr
             if let selectedLocation {
-                if matches(selectedLocation, cachedSnapshot.location) {
+                if sameForecast(selectedLocation, cachedSnapshot.location) {
                     snapshot = cachedSnapshot
                     self.selectedLocation = cachedSnapshot.location
                     lastSuccessfulFetchAt = cached.savedAt
@@ -80,10 +82,13 @@ final class WeatherViewModel: ObservableObject {
             }
         }
 
-        if let selectedLocation,
-           !selectedLocation.isCurrentLocation,
-           (!restoredMatchingSnapshot || !hasFreshForecast(lowPowerMode: lowPowerMode)) {
-            load(selectedLocation)
+        if let selectedLocation {
+            if requiresHRRRRefresh {
+                load(selectedLocation)
+            } else if !selectedLocation.isCurrentLocation,
+                      (!restoredMatchingSnapshot || !hasFreshForecast(lowPowerMode: lowPowerMode)) {
+                load(selectedLocation)
+            }
         }
     }
 
@@ -126,6 +131,23 @@ final class WeatherViewModel: ObservableObject {
         load(location)
     }
 
+    var selectedForecastModel: ForecastModel {
+        selectedLocation?.forecastModel ?? snapshot?.location.forecastModel ?? .hrrr
+    }
+
+    func selectForecastModel(_ forecastModel: ForecastModel) {
+        guard var location = selectedLocation ?? snapshot?.location,
+              location.forecastModel != forecastModel else { return }
+        location.forecastModel = forecastModel
+
+        if let index = favoriteLocations.firstIndex(where: { samePlace($0, location) }) {
+            favoriteLocations[index].forecastModel = forecastModel
+        }
+
+        selectedLocation = location
+        load(location, force: true)
+    }
+
     func refresh() {
         guard let location = selectedLocation ?? snapshot?.location else { return }
         load(location, force: true)
@@ -158,7 +180,7 @@ final class WeatherViewModel: ObservableObject {
     }
 
     func toggleFavorite(_ location: WeatherLocation) {
-        if let index = favoriteLocations.firstIndex(where: { matches($0, location) }) {
+        if let index = favoriteLocations.firstIndex(where: { samePlace($0, location) }) {
             favoriteLocations.remove(at: index)
         } else {
             favoriteLocations.append(location)
@@ -176,7 +198,7 @@ final class WeatherViewModel: ObservableObject {
     }
 
     func isFavorite(_ location: WeatherLocation) -> Bool {
-        favoriteLocations.contains { matches($0, location) }
+        favoriteLocations.contains { samePlace($0, location) }
     }
 
     private func hasFreshForecast(lowPowerMode: Bool = false) -> Bool {
@@ -189,11 +211,11 @@ final class WeatherViewModel: ObservableObject {
 
     private func load(_ location: WeatherLocation, force: Bool = false) {
         if !force {
-            if let loadingLocation, matches(loadingLocation, location) {
+            if let loadingLocation, sameForecast(loadingLocation, location) {
                 return
             }
             if let displayedLocation = snapshot?.location,
-               matches(displayedLocation, location),
+               sameForecast(displayedLocation, location),
                hasFreshForecast() {
                 return
             }
@@ -218,6 +240,16 @@ final class WeatherViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 loadingLocation = nil
+                if let displayedLocation = snapshot?.location,
+                   samePlace(displayedLocation, location),
+                   displayedLocation.forecastModel != location.forecastModel {
+                    selectedLocation = displayedLocation
+                    if let index = favoriteLocations.firstIndex(where: {
+                        samePlace($0, displayedLocation)
+                    }) {
+                        favoriteLocations[index].forecastModel = displayedLocation.forecastModel
+                    }
+                }
                 errorMessage = error.localizedDescription
                 isLoading = false
             }
@@ -235,7 +267,11 @@ final class WeatherViewModel: ObservableObject {
         UserDefaults.standard.set(data, forKey: Keys.selectedLocation)
     }
 
-    private func matches(_ lhs: WeatherLocation, _ rhs: WeatherLocation) -> Bool {
+    private func samePlace(_ lhs: WeatherLocation, _ rhs: WeatherLocation) -> Bool {
         abs(lhs.latitude - rhs.latitude) < 0.001 && abs(lhs.longitude - rhs.longitude) < 0.001
+    }
+
+    private func sameForecast(_ lhs: WeatherLocation, _ rhs: WeatherLocation) -> Bool {
+        samePlace(lhs, rhs) && lhs.forecastModel == rhs.forecastModel
     }
 }

@@ -20,6 +20,15 @@ enum WeatherServiceError: LocalizedError {
     }
 }
 
+struct NWSWeatherContext: Sendable {
+    let location: WeatherLocation
+    let forecastOffice: String?
+    let observation: Observation?
+    let station: ObservationStation?
+    let alerts: [WeatherAlert]
+    let alertsUnavailable: Bool
+}
+
 actor NWSClient {
     static let shared = NWSClient()
 
@@ -88,6 +97,36 @@ actor NWSClient {
             daily: daily.properties.periods,
             hourly: hourly.properties.periods,
             precipitationAmounts: precipitationAmounts,
+            observation: stationAndObservation.observation,
+            station: stationAndObservation.station,
+            alerts: alerts.value?.features.map(\.properties.alert) ?? [],
+            alertsUnavailable: !alerts.succeeded,
+            hourlyForecastModel: .nws
+        )
+    }
+
+    func weatherContext(for requestedLocation: WeatherLocation) async throws -> NWSWeatherContext {
+        let coordinates = String(format: "%.4f,%.4f", requestedLocation.latitude, requestedLocation.longitude)
+        guard let pointURL = URL(string: "https://api.weather.gov/points/\(coordinates)"),
+              let alertsURL = URL(string: "https://api.weather.gov/alerts/active?point=\(coordinates)") else {
+            throw WeatherServiceError.invalidURL
+        }
+
+        let point = try await pointResponse(at: pointURL, cacheKey: coordinates)
+        async let stationResult = fetchStationAndObservation(from: point.properties.observationStations)
+        async let alertResult: OptionalFetch<AlertsResponse> = optionalGet(alertsURL)
+        let (stationAndObservation, alerts) = await (stationResult, alertResult)
+
+        var location = requestedLocation
+        if let place = point.properties.relativeLocation?.properties,
+           requestedLocation.isCurrentLocation || requestedLocation.name == "Dropped pin" {
+            location.name = place.city
+            location.state = place.state
+        }
+
+        return NWSWeatherContext(
+            location: location,
+            forecastOffice: point.properties.forecastOffice?.absoluteString,
             observation: stationAndObservation.observation,
             station: stationAndObservation.station,
             alerts: alerts.value?.features.map(\.properties.alert) ?? [],

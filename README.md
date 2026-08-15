@@ -10,7 +10,7 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
   <tr>
     <td><img src="docs/screenshots/boulder-forecast.png" alt="Drash forecast for Boulder, Colorado" width="260"></td>
     <td><img src="docs/screenshots/boulder-precipitation.png" alt="Temperature and expected precipitation chart for Boulder, Colorado" width="260"></td>
-    <td><img src="docs/screenshots/boulder-radar.png" alt="Observed National Weather Service radar around Boulder, Colorado" width="260"></td>
+    <td><img src="docs/screenshots/boulder-radar.png" alt="Observed NWS radar around Boulder, Colorado" width="260"></td>
   </tr>
   <tr>
     <td align="center">Forecast</td>
@@ -19,12 +19,13 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
   </tr>
 </table>
 
-## Included in 0.0.1
+## Included in 0.0.2
 
-- Current conditions plus hourly and seven-day NWS forecasts
+- An expandable next-24-hours card powered by high-resolution NOAA HRRR guidance
+- Per-place daily switching between the seven-day NWS outlook and HRRR's shorter horizon
 - Detailed day/night forecasts and active NWS alerts
 - A tappable 24-hour temperature and expected-precipitation chart
-- Recent observed NWS radar with playback and map controls
+- Radar switching between HRRR simulated reflectivity and recent NWS observations, with playback and map controls
 - Current location, U.S. place/ZIP search, and saved places
 - Fahrenheit and Celsius, accessible labels, battery-conscious refreshes, and no accounts, ads, analytics, or third-party tracking
 
@@ -53,13 +54,15 @@ Personal-team signing is free but expires periodically, so Xcode may need to reb
 
 ## Data and coverage
 
-The app calls `api.weather.gov` directly. The NWS API is free public data and requires an identifying `User-Agent`; this project sends `Drash/1.0 (personal iOS weather app)`. Before public distribution, update that value in `Drash/Services/NWSClient.swift` to include a real app website or support email.
+The app calls `api.weather.gov` directly for NWS forecasts, observations, and alerts. The NWS API is free public data and requires an identifying `User-Agent`; this project sends `Drash/1.0 (personal iOS weather app)`. Before public distribution, update that value in `Drash/Services/NWSClient.swift` to include a real app website or support email.
+
+Drash retrieves NOAA HRRR model output from Open-Meteo's GFS & HRRR API for the expandable next-24-hours forecast while continuing to use NWS observations and alerts. Daily forecasts also default to HRRR, and each place retains its choice if you switch to the seven-day NWS outlook. HRRR covers the continental United States at roughly 3 km resolution, updates hourly, and normally provides 18 hours of guidance, extending to 48 hours for the 00Z, 06Z, 12Z, and 18Z runs.
 
 Drash does not poll in the background. It reuses a recently saved forecast for 15 minutes, requests only a single kilometer-accuracy location fix when the previous current-location forecast is at least 30 minutes old, and stretches both intervals to one hour while Low Power Mode is enabled. It cancels in-flight forecast work when backgrounded, destroys the radar map when Radar is hidden or the app is inactive, and disables automatic radar playback in Low Power Mode. Pull to refresh, manual radar frame controls, and the radar refresh button remain available.
 
 The on-device app name is **Drash**. **Drash Weather** is the recommended public App Store title so its purpose is immediately clear, while the shorter name remains beneath the Home Screen icon.
 
-NWS point forecasts cover the United States and its territories. The API provides forecasts, observations, and alerts but not display-ready radar tiles, so the Radar tab renders the official NWS CONUS precipitation-radar OGC/WMS layer on a native MapKit map. Drash shows only recent observed radar frames; it does not download a separate forecast-radar model. The full RIDGE2 viewer remains available from the radar options menu.
+NWS point forecasts cover the United States and its territories. The Radar tab defaults to the official CONUS precipitation-radar OGC/WMS layer and provides two hours of recent observed frames. Its optional HRRR mode renders simulated reflectivity from Iowa State University's IEM tile service in 15-minute steps through forecast hour 18. These are observations and model guidance respectively—not interchangeable measurements. The full RIDGE2 viewer remains available from the radar options menu.
 
 ## Logical next releases
 
@@ -74,7 +77,7 @@ NWS point forecasts cover the United States and its territories. The API provide
 ## Project layout
 
 - `Drash/Models`: app data and NWS response models
-- `Drash/Services`: NWS networking, caching, location, and place search
+- `Drash/Services`: NWS and HRRR networking, caching, location, and place search
 - `Drash/ViewModels`: screen state and persistence
 - `Drash/Views`: forecast, alerts, radar, places, and settings
 - `Drash/SupportingFiles`: weather presentation helpers
