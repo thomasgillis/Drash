@@ -5,6 +5,7 @@ import UIKit
 struct ForecastView: View {
     @EnvironmentObject private var model: WeatherViewModel
     @EnvironmentObject private var locationManager: LocationManager
+    @Environment(\.colorScheme) private var colorScheme
     @State private var selectedAlert: WeatherAlert?
 
     private enum ScrollAnchor: Hashable {
@@ -89,15 +90,15 @@ struct ForecastView: View {
                     ProgressView()
                         .tint(ForecastPalette.blue)
                         .padding(8)
-                        .background(.white.opacity(0.92), in: Circle())
-                        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                        .background(ForecastPalette.card, in: Circle())
+                        .overlay(Circle().stroke(ForecastPalette.cardBorder))
+                        .shadow(color: ForecastPalette.shadow, radius: 8, y: 3)
                     Spacer()
                 }
                 .padding(.top, 8)
             }
         }
         .navigationTitle(model.snapshot?.location.displayName ?? "Drash")
-        .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if let location = model.snapshot?.location {
@@ -124,10 +125,18 @@ struct ForecastView: View {
 
     private var background: LinearGradient {
         let isNight = model.snapshot?.hourly.first?.isDaytime == false
-        return LinearGradient(
-            colors: isNight
+        let colors: [Color]
+        if colorScheme == .dark {
+            colors = isNight
+                ? [Color(red: 0.025, green: 0.035, blue: 0.08), Color(red: 0.07, green: 0.09, blue: 0.18)]
+                : [Color(red: 0.025, green: 0.075, blue: 0.11), Color(red: 0.055, green: 0.15, blue: 0.21)]
+        } else {
+            colors = isNight
                 ? [Color(red: 0.91, green: 0.92, blue: 0.99), Color(red: 0.78, green: 0.83, blue: 0.96)]
-                : [Color(red: 0.94, green: 0.98, blue: 1), Color(red: 0.73, green: 0.89, blue: 0.97)],
+                : [Color(red: 0.94, green: 0.98, blue: 1), Color(red: 0.73, green: 0.89, blue: 0.97)]
+        }
+        return LinearGradient(
+            colors: colors,
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -179,8 +188,12 @@ private struct CurrentConditionsCard: View {
         VStack(spacing: 8) {
             HStack(alignment: .center, spacing: 18) {
                 Image(systemName: snapshot.hourly.first?.symbolName ?? "cloud.sun.fill")
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(snapshot.hourly.first?.weatherTint ?? ForecastPalette.blue)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(
+                        snapshot.hourly.first?.weatherTint ?? ForecastPalette.secondary,
+                        snapshot.hourly.first?.weatherSecondaryTint ?? ForecastPalette.blue,
+                        snapshot.hourly.first?.weatherTertiaryTint ?? ForecastPalette.blue
+                    )
                     .font(.system(size: 64))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -274,8 +287,12 @@ private struct HourlyStrip: View {
                             Text(period.startTime, format: .dateTime.hour())
                                 .font(.caption)
                             Image(systemName: period.symbolName)
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundStyle(period.weatherTint)
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(
+                                    period.weatherTint,
+                                    period.weatherSecondaryTint,
+                                    period.weatherTertiaryTint
+                                )
                                 .font(.title2)
                             Text("\(period.temperature(in: unit))°")
                                 .font(.headline)
@@ -592,7 +609,7 @@ private struct MeteogramCard: View {
     }
 
     private var precipitationBarColor: Color {
-        Color(red: 0.42, green: 0.75, blue: 1.0).opacity(0.64)
+        ForecastPalette.precipitation.opacity(0.7)
     }
 
     private var selectedPeriod: ForecastPeriod? {
@@ -698,7 +715,7 @@ private struct MeteogramCard: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(ForecastPalette.ink.opacity(0.88), in: Capsule())
+            .background(ForecastPalette.badgeBackground, in: Capsule())
             .accessibilityIdentifier("meteogram-time-indicator")
     }
 
@@ -1108,6 +1125,7 @@ private struct DailyForecastRow: Identifiable {
 }
 
 private struct DayForecastDetailView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let row: DailyForecastRow
     let hourlyPeriods: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
@@ -1117,10 +1135,9 @@ private struct DayForecastDetailView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [
-                    Color(red: 0.94, green: 0.98, blue: 1),
-                    Color(red: 0.78, green: 0.9, blue: 0.97)
-                ],
+                colors: colorScheme == .dark
+                    ? [Color(red: 0.025, green: 0.075, blue: 0.11), Color(red: 0.055, green: 0.15, blue: 0.21)]
+                    : [Color(red: 0.94, green: 0.98, blue: 1), Color(red: 0.78, green: 0.9, blue: 0.97)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -1169,7 +1186,6 @@ private struct DayForecastDetailView: View {
         .foregroundStyle(ForecastPalette.ink)
         .navigationTitle(row.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.light, for: .navigationBar)
     }
 }
 
@@ -1182,8 +1198,12 @@ private struct DetailedPeriodCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
                 Image(systemName: period.symbolName)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(period.weatherTint)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(
+                        period.weatherTint,
+                        period.weatherSecondaryTint,
+                        period.weatherTertiaryTint
+                    )
                     .font(.system(size: 42))
                     .frame(width: 52)
 
@@ -1310,8 +1330,12 @@ private struct DailyPeriodSummary: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: period.symbolName)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(period.weatherTint)
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(
+                    period.weatherTint,
+                    period.weatherSecondaryTint,
+                    period.weatherTertiaryTint
+                )
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -1376,16 +1400,49 @@ private struct MetricTile: View {
 private extension View {
     func glassCard() -> some View {
         background(ForecastPalette.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.9)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(ForecastPalette.cardBorder)
+            )
             .shadow(color: ForecastPalette.shadow, radius: 14, y: 6)
     }
 }
 
 private enum ForecastPalette {
-    static let ink = Color(red: 0.08, green: 0.15, blue: 0.24)
-    static let secondary = Color(red: 0.28, green: 0.38, blue: 0.48)
-    static let blue = Color(red: 0.02, green: 0.42, blue: 0.76)
-    static let card = Color.white.opacity(0.88)
-    static let grid = Color(red: 0.58, green: 0.66, blue: 0.73).opacity(0.35)
-    static let shadow = Color(red: 0.12, green: 0.3, blue: 0.45).opacity(0.12)
+    static let ink = Color(uiColor: .label)
+    static let secondary = Color(uiColor: .secondaryLabel)
+    static let blue = adaptive(
+        light: UIColor(red: 0.02, green: 0.42, blue: 0.76, alpha: 1),
+        dark: UIColor(red: 0.32, green: 0.7, blue: 1, alpha: 1)
+    )
+    static let precipitation = adaptive(
+        light: UIColor(red: 0.28, green: 0.66, blue: 0.96, alpha: 1),
+        dark: UIColor(red: 0.4, green: 0.78, blue: 1, alpha: 1)
+    )
+    static let badgeBackground = adaptive(
+        light: UIColor(red: 0.08, green: 0.15, blue: 0.24, alpha: 0.88),
+        dark: UIColor(red: 0.08, green: 0.24, blue: 0.36, alpha: 0.96)
+    )
+    static let card = adaptive(
+        light: UIColor(white: 1, alpha: 0.88),
+        dark: UIColor(red: 0.075, green: 0.105, blue: 0.14, alpha: 0.88)
+    )
+    static let cardBorder = adaptive(
+        light: UIColor(white: 1, alpha: 0.9),
+        dark: UIColor(white: 1, alpha: 0.14)
+    )
+    static let grid = adaptive(
+        light: UIColor(red: 0.58, green: 0.66, blue: 0.73, alpha: 0.35),
+        dark: UIColor(red: 0.6, green: 0.72, blue: 0.82, alpha: 0.28)
+    )
+    static let shadow = adaptive(
+        light: UIColor(red: 0.12, green: 0.3, blue: 0.45, alpha: 0.12),
+        dark: UIColor(white: 0, alpha: 0.38)
+    )
+
+    private static func adaptive(light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
 }
