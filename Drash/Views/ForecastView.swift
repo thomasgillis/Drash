@@ -327,7 +327,7 @@ private struct HourlyForecastCard: View {
                 }
             } label: {
                 HStack {
-                    Label("Next 24 hours · \(forecastModel.shortName)", systemImage: "clock")
+                    Label("Next 24 hours", systemImage: "clock")
                         .font(.headline)
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -341,7 +341,7 @@ private struct HourlyForecastCard: View {
                 .padding(.top)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Next 24 hours · \(forecastModel.shortName)")
+            .accessibilityLabel("Next 24 hours")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint(isExpanded ? "Collapses the 24-hour forecast" : "Expands the 24-hour forecast")
 
@@ -383,7 +383,6 @@ private struct MeteogramCard: View {
     let usesCardBackground: Bool
     private let derivedData: MeteogramDerivedData
     @State private var selectedTime: Date?
-    @State private var selectionDismissTask: Task<Void, Never>?
 
     init(
         periods: [ForecastPeriod],
@@ -410,10 +409,6 @@ private struct MeteogramCard: View {
                 Label("24-hour forecast", systemImage: "chart.xyaxis.line")
                     .font(.headline)
                 Spacer()
-                Text("\(forecastModel.shortName) · automatic")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(ForecastPalette.blue)
-                    .accessibilityIdentifier("hourly-forecast-model")
             }
 
             HStack(spacing: 18) {
@@ -543,10 +538,8 @@ private struct MeteogramCard: View {
                                 proxy: proxy,
                                 geometry: geometry
                             )
-                            scheduleSelectionDismissal()
                         },
                         onHorizontalDragChanged: { location in
-                            selectionDismissTask?.cancel()
                             selectTime(
                                 at: location,
                                 proxy: proxy,
@@ -559,14 +552,12 @@ private struct MeteogramCard: View {
                                 proxy: proxy,
                                 geometry: geometry
                             )
-                            scheduleSelectionDismissal()
                         }
                     )
                 }
             }
             .frame(height: 220)
             .onChange(of: periods.map(\.startTime)) { _, _ in
-                selectionDismissTask?.cancel()
                 selectedTime = nil
             }
             .accessibilityLabel(
@@ -591,7 +582,9 @@ private struct MeteogramCard: View {
         .foregroundStyle(ForecastPalette.ink)
         .padding()
         .modifier(OptionalGlassCard(enabled: usesCardBackground))
-        .onDisappear { selectionDismissTask?.cancel() }
+        .task(id: selectedTime) {
+            await dismissSelectionAfterDelay()
+        }
     }
 
     private var temperatureDomain: ClosedRange<Double> {
@@ -724,21 +717,18 @@ private struct MeteogramCard: View {
             return
         }
         selectedTime = periods[nextIndex].startTime
-        scheduleSelectionDismissal()
     }
 
-    private func scheduleSelectionDismissal() {
-        selectionDismissTask?.cancel()
-        selectionDismissTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: .seconds(10))
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
-                selectedTime = nil
-            }
+    private func dismissSelectionAfterDelay() async {
+        guard selectedTime != nil else { return }
+        do {
+            try await Task.sleep(for: .seconds(10))
+        } catch {
+            return
+        }
+        guard !Task.isCancelled else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            selectedTime = nil
         }
     }
 
@@ -1038,32 +1028,12 @@ private struct DailyForecastCard: View {
                         forecastModel: forecastModel
                     )
                 } label: {
-                    HStack(alignment: .center, spacing: 10) {
-                        Text(row.name)
-                            .font(.subheadline.weight(.semibold))
-                            .multilineTextAlignment(.center)
-                            .frame(width: 72)
-
-                        VStack(spacing: 0) {
-                            if let daytime = row.daytime {
-                                DailyPeriodSubrow(label: "Day", period: daytime, unit: unit)
-                            }
-                            if row.daytime != nil, row.nighttime != nil {
-                                Divider().overlay(ForecastPalette.grid)
-                            }
-                            if let nighttime = row.nighttime {
-                                DailyPeriodSubrow(label: "Night", period: nighttime, unit: unit)
-                            }
-                        }
-
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(ForecastPalette.secondary.opacity(0.65))
-                    }
+                    DailyForecastSummary(row: row, unit: unit)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("daily-forecast-\(row.id)")
-                .padding(.vertical, 6)
+                .accessibilityHint("Opens the detailed forecast for \(row.name)")
+                .padding(.vertical, 8)
 
                 if index < dailyRows.count - 1 {
                     Divider().overlay(ForecastPalette.grid)
@@ -1128,6 +1098,12 @@ private struct DailyForecastRow: Identifiable {
                 ? String(nighttime.name.dropLast(" Night".count))
                 : nighttime.name
         }
+    }
+
+    var peakPrecipitationChance: Int {
+        [daytime, nighttime]
+            .compactMap { $0?.precipitationChance }
+            .max() ?? 0
     }
 }
 
@@ -1256,48 +1232,103 @@ private struct DetailedPeriodCard: View {
     }
 }
 
-private struct DailyPeriodSubrow: View {
-    let label: String
-    let period: ForecastPeriod
+private struct DailyForecastSummary: View {
+    let row: DailyForecastRow
     let unit: TemperatureUnit
 
     var body: some View {
-        HStack(spacing: 7) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(ForecastPalette.secondary)
-                .frame(width: 34, alignment: .leading)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Text(row.name)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
 
+                Spacer(minLength: 4)
+
+                if row.peakPrecipitationChance > 0 {
+                    Label("\(row.peakPrecipitationChance)%", systemImage: "drop.fill")
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .foregroundStyle(ForecastPalette.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(ForecastPalette.blue.opacity(0.09), in: Capsule())
+                        .accessibilityLabel(
+                            "\(row.peakPrecipitationChance) percent peak precipitation chance"
+                        )
+                }
+
+                DailyTemperaturePair(row: row, unit: unit)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(ForecastPalette.secondary.opacity(0.65))
+            }
+
+            HStack(spacing: 8) {
+                if let daytime = row.daytime {
+                    DailyPeriodSummary(label: "Day", period: daytime)
+                }
+                if let nighttime = row.nighttime {
+                    DailyPeriodSummary(label: "Night", period: nighttime)
+                }
+            }
+        }
+    }
+}
+
+private struct DailyTemperaturePair: View {
+    let row: DailyForecastRow
+    let unit: TemperatureUnit
+
+    var body: some View {
+        HStack(spacing: 9) {
+            if let nighttime = row.nighttime {
+                temperature(label: "Low", period: nighttime, color: ForecastPalette.blue)
+            }
+            if let daytime = row.daytime {
+                temperature(label: "High", period: daytime, color: .orange)
+            }
+        }
+    }
+
+    private func temperature(label: String, period: ForecastPeriod, color: Color) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(ForecastPalette.secondary)
+            Text("\(period.temperature(in: unit))°")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(color)
+        }
+    }
+}
+
+private struct DailyPeriodSummary: View {
+    let label: String
+    let period: ForecastPeriod
+
+    var body: some View {
+        HStack(spacing: 8) {
             Image(systemName: period.symbolName)
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(period.weatherTint)
-                .frame(width: 24)
+                .frame(width: 22)
 
-            Text(period.shortForecast)
-                .font(.caption)
-                .lineLimit(1)
-                .foregroundStyle(ForecastPalette.secondary)
-
-            Spacer(minLength: 2)
-
-            if period.precipitationChance > 0 {
-                Text("\(period.precipitationChance)%")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(ForecastPalette.blue)
-                    .frame(width: 32, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(ForecastPalette.secondary)
+                Text(period.shortForecast)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(ForecastPalette.ink)
             }
 
-            Text("\(label == "Day" ? "H" : "L") \(period.temperature(in: unit))°")
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(label == "Day" ? .orange : ForecastPalette.blue)
-                .frame(width: 48, alignment: .trailing)
+            Spacer(minLength: 0)
         }
-        .frame(minHeight: 38)
+        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "\(label), \(period.shortForecast), \(period.precipitationChance) percent precipitation, "
-                + "\(label == "Day" ? "high" : "low") \(period.temperature(in: unit)) degrees"
-        )
+        .accessibilityLabel("\(label), \(period.shortForecast)")
     }
 }
 

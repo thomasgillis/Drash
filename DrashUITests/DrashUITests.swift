@@ -46,7 +46,7 @@ final class DrashUITests: XCTestCase {
         tabBar.buttons["Forecast"].tap()
         XCTAssertTrue(app.staticTexts["Temperature °C"].waitForExistence(timeout: 35))
 
-        let hourlySummary = app.buttons["Next 24 hours · HRRR"]
+        let hourlySummary = app.buttons["Next 24 hours"]
         XCTAssertTrue(hourlySummary.waitForExistence(timeout: 5))
         for _ in 0..<3 where !hourlySummary.isHittable {
             app.swipeUp(velocity: .slow)
@@ -185,7 +185,7 @@ final class DrashUITests: XCTestCase {
     }
 
     func testInteractiveMeteogramTimeIndicator() throws {
-        let hourlySummary = app.buttons["Next 24 hours · HRRR"]
+        let hourlySummary = app.buttons["Next 24 hours"]
         XCTAssertTrue(hourlySummary.waitForExistence(timeout: 35))
         let forecastScrollView = app.scrollViews["forecast-scroll-view"]
         XCTAssertTrue(forecastScrollView.waitForExistence(timeout: 3))
@@ -297,6 +297,31 @@ final class DrashUITests: XCTestCase {
 
         app.buttons["NWS"].tap()
         XCTAssertTrue(app.staticTexts["OBSERVED"].waitForExistence(timeout: 30))
+
+        let previousFrame = app.buttons["Previous radar frame"]
+        let nextFrame = app.buttons["Next radar frame"]
+        let sliderLeftOutside = timeline.coordinate(
+            withNormalizedOffset: CGVector(dx: -0.25, dy: 0.5)
+        )
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: sliderLeftOutside,
+            withVelocity: .slow,
+            thenHoldForDuration: 0
+        )
+        XCTAssertFalse(previousFrame.isEnabled, "Radar timeline should stop at its first frame")
+
+        let sliderRightOutside = timeline.coordinate(
+            withNormalizedOffset: CGVector(dx: 1.25, dy: 0.5)
+        )
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).press(
+            forDuration: 0.1,
+            thenDragTo: sliderRightOutside,
+            withVelocity: .slow,
+            thenHoldForDuration: 0
+        )
+        XCTAssertFalse(nextFrame.isEnabled, "Radar timeline should stop at its latest frame")
+
         let precipitationLegend = app.descendants(matching: .any)["precipitation-intensity-legend"]
         XCTAssertFalse(precipitationLegend.exists)
 
@@ -310,7 +335,26 @@ final class DrashUITests: XCTestCase {
         app.buttons["Hide precipitation legend"].tap()
         XCTAssertTrue(precipitationLegend.waitForNonExistence(timeout: 3))
 
-        timeline.adjust(toNormalizedSliderPosition: 0)
+        let latestTimelineValue = timeline.value as? String
+        let sliderStart = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        let sliderEnd = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
+        sliderStart.press(
+            forDuration: 0.15,
+            thenDragTo: sliderEnd,
+            withVelocity: .slow,
+            thenHoldForDuration: 0
+        )
+        let timelineMoved = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (timeline.value as? String) != latestTimelineValue
+            },
+            object: app
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [timelineMoved], timeout: 5), .completed)
+        let frameLoading = app.activityIndicators["Loading radar frame"]
+        _ = frameLoading.waitForExistence(timeout: 2)
+        XCTAssertTrue(frameLoading.waitForNonExistence(timeout: 20))
+        XCTAssertFalse(app.staticTexts["Pause or release to load frame"].exists)
         XCTAssertTrue(app.staticTexts["OBSERVED"].waitForExistence(timeout: 5))
 
         let historyScreenshot = XCTAttachment(screenshot: app.screenshot())
@@ -408,7 +452,7 @@ final class DrashUITests: XCTestCase {
         let forecastScrollView = app.scrollViews["forecast-scroll-view"]
         let nws = app.buttons["NWS"]
         let hrrr = app.buttons["HRRR"]
-        let automaticHRRR = app.buttons["Next 24 hours · HRRR"]
+        let automaticHRRR = app.buttons["Next 24 hours"]
         XCTAssertTrue(automaticHRRR.waitForExistence(timeout: 5))
         for _ in 0..<4 where !automaticHRRR.isHittable {
             forecastScrollView.swipeUp(velocity: .slow)
@@ -416,10 +460,12 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(automaticHRRR.isHittable)
         automaticHRRR.tap()
         XCTAssertEqual(automaticHRRR.value as? String, "Expanded")
-        for _ in 0..<4 where !app.staticTexts["HRRR · automatic"].exists {
+        let chartHeading = app.staticTexts["24-hour forecast"]
+        for _ in 0..<4 where !chartHeading.exists {
             forecastScrollView.swipeUp(velocity: .slow)
         }
-        XCTAssertTrue(app.staticTexts["HRRR · automatic"].waitForExistence(timeout: 5))
+        XCTAssertTrue(chartHeading.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["HRRR · automatic"].exists)
         for _ in 0..<4 where !automaticHRRR.isHittable {
             forecastScrollView.swipeDown(velocity: .slow)
         }
@@ -495,7 +541,7 @@ final class DrashUITests: XCTestCase {
         forecastScreenshot.lifetime = .keepAlways
         add(forecastScreenshot)
 
-        let hourlySummary = app.buttons["Next 24 hours · HRRR"]
+        let hourlySummary = app.buttons["Next 24 hours"]
         let forecastScrollView = app.scrollViews["forecast-scroll-view"]
         XCTAssertTrue(hourlySummary.waitForExistence(timeout: 5))
         XCTAssertTrue(forecastScrollView.waitForExistence(timeout: 3))

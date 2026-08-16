@@ -41,7 +41,8 @@ struct RadarView: View {
                     recenterToken: recenterToken,
                     radarSource: radarSource,
                     frame: renderedRadarFrame,
-                    prefetchFrames: adjacentRadarFrames,
+                    prefetchFrames: nearbyRadarFrames,
+                    animatesFrameTransitions: isPlaying,
                     isLoadingFrame: $isLoadingRadarFrame,
                     isActive: true
                 )
@@ -75,10 +76,15 @@ struct RadarView: View {
             await checkRadarAvailability()
         }
         .task(id: isPlaying) { await runRadarLoop() }
-        .onDisappear { isPlaying = false }
+        .task(id: isScrubbingRadar) { await runRadarScrubLoop() }
+        .onDisappear {
+            isPlaying = false
+            isScrubbingRadar = false
+        }
         .onChange(of: isActive) { _, active in
             if !active {
                 isPlaying = false
+                isScrubbingRadar = false
             }
         }
         .onChange(of: radarSource) { _, _ in
@@ -94,6 +100,7 @@ struct RadarView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 isPlaying = false
+                isScrubbingRadar = false
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
@@ -271,7 +278,7 @@ struct RadarView: View {
                 Text(selectedRadarFrame?.validTime.formatted(date: .omitted, time: .shortened) ?? "—")
                     .font(.caption.monospacedDigit().weight(.semibold))
 
-                if isLoadingRadarFrame && !isScrubbingRadar {
+                if isLoadingRadarFrame {
                     ProgressView()
                         .controlSize(.mini)
                         .accessibilityLabel("Loading radar frame")
@@ -311,32 +318,31 @@ struct RadarView: View {
 
             Slider(
                 value: Binding(
-                    get: { Double(selectedFrameIndex) },
-                    set: {
+                    get: { Double(clampedRadarFrameIndex(selectedFrameIndex)) },
+                    set: { value in
                         isPlaying = false
-                        selectedFrameIndex = Int($0.rounded())
+                        selectedFrameIndex = radarFrameIndex(for: value)
                     }
                 ),
-                in: 0...Double(max(radarFrames.count - 1, 0)),
+                in: radarSliderRange,
                 step: 1,
                 onEditingChanged: { isEditing in
                     isPlaying = false
                     isScrubbingRadar = isEditing
                     if !isEditing {
+                        selectedFrameIndex = clampedRadarFrameIndex(selectedFrameIndex)
                         renderedFrameIndex = selectedFrameIndex
                     }
                 }
             )
             .tint(.blue)
+            .frame(minHeight: 44)
             .accessibilityLabel("Radar time")
             .accessibilityValue(radarAccessibilityValue)
+            .accessibilityHint("Swipe up or down to move through radar frames")
 
             if isLowPowerModeEnabled {
                 Label("Playback paused in Low Power Mode", systemImage: "battery.25percent")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else if isScrubbingRadar {
-                Label("Release to load this frame", systemImage: "hand.draw")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -512,10 +518,34 @@ struct RadarView: View {
         return radarFrames[renderedFrameIndex]
     }
 
-    private var adjacentRadarFrames: [RadarFrame] {
-        [renderedFrameIndex + 1, renderedFrameIndex - 1]
-            .filter { radarFrames.indices.contains($0) }
-            .map { radarFrames[$0] }
+    private var nearbyRadarFrames: [RadarFrame] {
+        guard radarFrames.count > 1,
+              !isLowPowerModeEnabled else { return [] }
+        let offsets = [-1, 1, -2, 2]
+        var seenIndices = Set<Int>()
+
+        return offsets.compactMap { offset in
+            let index = (renderedFrameIndex + offset + radarFrames.count) % radarFrames.count
+            guard index != renderedFrameIndex,
+                  seenIndices.insert(index).inserted else { return nil }
+            return radarFrames[index]
+        }
+    }
+
+    private var radarSliderRange: ClosedRange<Double> {
+        0...Double(max(radarFrames.count - 1, 0))
+    }
+
+    private func radarFrameIndex(for sliderValue: Double) -> Int {
+        guard sliderValue.isFinite else {
+            return clampedRadarFrameIndex(selectedFrameIndex)
+        }
+        let boundedValue = min(max(sliderValue, radarSliderRange.lowerBound), radarSliderRange.upperBound)
+        return Int(boundedValue.rounded())
+    }
+
+    private func clampedRadarFrameIndex(_ index: Int) -> Int {
+        min(max(index, 0), max(radarFrames.count - 1, 0))
     }
 
     private var latestObservedIndex: Int {
@@ -548,10 +578,7 @@ struct RadarView: View {
 
     private func stepRadar(by amount: Int) {
         isPlaying = false
-        let newIndex = min(
-            max(selectedFrameIndex + amount, 0),
-            max(radarFrames.count - 1, 0)
-        )
+        let newIndex = clampedRadarFrameIndex(selectedFrameIndex + amount)
         selectedFrameIndex = newIndex
         renderedFrameIndex = newIndex
     }
@@ -565,11 +592,28 @@ struct RadarView: View {
         while isPlaying, radarIsActive, !isLowPowerModeEnabled, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(900))
             guard isPlaying, !Task.isCancelled else { return }
+            guard !isLoadingRadarFrame else { continue }
             let newIndex = selectedFrameIndex >= radarFrames.count - 1
                 ? 0
                 : selectedFrameIndex + 1
             selectedFrameIndex = newIndex
             renderedFrameIndex = newIndex
+        }
+    }
+
+    private func runRadarScrubLoop() async {
+        guard isScrubbingRadar else { return }
+
+        while isScrubbingRadar, !Task.isCancelled {
+            if !isLoadingRadarFrame, renderedFrameIndex != selectedFrameIndex {
+                renderedFrameIndex = selectedFrameIndex
+            }
+
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                return
+            }
         }
     }
 
@@ -687,6 +731,7 @@ private struct NativeRadarMap: UIViewRepresentable {
     let radarSource: RadarSource
     let frame: RadarFrame?
     let prefetchFrames: [RadarFrame]
+    let animatesFrameTransitions: Bool
     @Binding var isLoadingFrame: Bool
     let isActive: Bool
 
@@ -711,6 +756,7 @@ private struct NativeRadarMap: UIViewRepresentable {
                 radarSource: radarSource,
                 frame: frame,
                 prefetchFrames: prefetchFrames,
+                animatesTransition: animatesFrameTransitions,
                 isLoadingFrame: $isLoadingFrame
             )
         }
@@ -721,6 +767,11 @@ private struct NativeRadarMap: UIViewRepresentable {
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
+        context.coordinator.setFrameTransitionsAnimated(
+            animatesFrameTransitions,
+            on: mapView
+        )
+
         if context.coordinator.lastLocationID != location.id {
             context.coordinator.updateLocation(location, on: mapView, animated: true)
         }
@@ -743,6 +794,7 @@ private struct NativeRadarMap: UIViewRepresentable {
                 radarSource: radarSource,
                 frame: frame,
                 prefetchFrames: prefetchFrames,
+                animatesTransition: animatesFrameTransitions,
                 isLoadingFrame: $isLoadingFrame
             )
         }
@@ -787,10 +839,16 @@ private struct NativeRadarMap: UIViewRepresentable {
         var lastFrame: RadarFrame?
         var lastIsActive = false
         var opacity = 0.68
-        weak var radarRenderer: MKTileOverlayRenderer?
-        private weak var pendingRadarRenderer: MKTileOverlayRenderer?
-        private weak var pendingRadarOverlay: RadarTileOverlay?
+        var radarRenderer: MKTileOverlayRenderer?
+        private var radarOverlay: RadarTileOverlay?
+        private var pendingRadarRenderer: MKTileOverlayRenderer?
+        private var pendingRadarOverlay: RadarTileOverlay?
         private var pendingRequestID: UUID?
+        private var pendingTileIsReady = false
+        private var pendingLoadingBinding: Binding<Bool>?
+        private var pendingTransitionIsAnimated = false
+        private var frameTransitionsAreAnimated = false
+        private var radarTransitionID: UUID?
         private var mapHasLoaded = false
         private var reloadRadarWhenMapLoads = false
 
@@ -801,8 +859,10 @@ private struct NativeRadarMap: UIViewRepresentable {
             radarSource: RadarSource,
             frame: RadarFrame?,
             prefetchFrames: [RadarFrame],
+            animatesTransition: Bool,
             isLoadingFrame: Binding<Bool>
         ) {
+            finishRadarTransition(on: mapView)
             if let pendingRadarOverlay {
                 mapView.removeOverlay(pendingRadarOverlay)
             }
@@ -814,19 +874,22 @@ private struct NativeRadarMap: UIViewRepresentable {
                 frame: frame,
                 prefetchFrames: prefetchFrames,
                 requestID: requestID,
-                onFirstTileLoaded: { [weak self, weak mapView] completedRequestID in
+                onInitialTilesLoaded: { [weak self, weak mapView] completedRequestID in
                     DispatchQueue.main.async {
                         guard let self, let mapView else { return }
-                        self.showPendingRadar(
+                        self.markPendingRadarReady(
                             requestID: completedRequestID,
-                            on: mapView,
-                            isLoadingFrame: isLoadingFrame
+                            on: mapView
                         )
                     }
                 }
             )
             pendingRequestID = requestID
             pendingRadarOverlay = overlay
+            pendingRadarRenderer = nil
+            pendingTileIsReady = false
+            pendingLoadingBinding = isLoadingFrame
+            pendingTransitionIsAnimated = animatesTransition
             DispatchQueue.main.async {
                 isLoadingFrame.wrappedValue = true
             }
@@ -838,32 +901,112 @@ private struct NativeRadarMap: UIViewRepresentable {
             self.opacity = opacity
         }
 
-        private func showPendingRadar(
+        private func markPendingRadarReady(
             requestID: UUID,
-            on mapView: MKMapView,
-            isLoadingFrame: Binding<Bool>
+            on mapView: MKMapView
         ) {
-            guard pendingRequestID == requestID,
+            guard pendingRequestID == requestID else { return }
+            pendingTileIsReady = true
+            showPendingRadarIfReady(on: mapView)
+        }
+
+        private func showPendingRadarIfReady(on mapView: MKMapView) {
+            guard pendingTileIsReady,
                   let pendingRadarOverlay,
                   let pendingRadarRenderer else { return }
 
-            pendingRadarRenderer.alpha = opacity
-            mapView.overlays
-                .compactMap { $0 as? RadarTileOverlay }
-                .filter { $0 !== pendingRadarOverlay }
-                .forEach(mapView.removeOverlay)
+            let previousOverlay = radarOverlay
+            let previousRenderer = radarRenderer
+            let animatesTransition = pendingTransitionIsAnimated
+            pendingRadarRenderer.alpha = previousRenderer == nil || !animatesTransition
+                ? opacity
+                : 0
+            radarOverlay = pendingRadarOverlay
             radarRenderer = pendingRadarRenderer
             self.pendingRadarOverlay = nil
             self.pendingRadarRenderer = nil
             pendingRequestID = nil
-            isLoadingFrame.wrappedValue = false
+            pendingTileIsReady = false
+            pendingLoadingBinding?.wrappedValue = false
+            pendingLoadingBinding = nil
+            pendingTransitionIsAnimated = false
+
+            guard let previousOverlay,
+                  let previousRenderer else { return }
+            if animatesTransition {
+                transitionRadar(
+                    from: previousOverlay,
+                    renderer: previousRenderer,
+                    to: pendingRadarRenderer,
+                    on: mapView
+                )
+            } else {
+                mapView.removeOverlay(previousOverlay)
+            }
+        }
+
+        func setFrameTransitionsAnimated(_ animated: Bool, on mapView: MKMapView) {
+            if frameTransitionsAreAnimated, !animated {
+                finishRadarTransition(on: mapView)
+            }
+            frameTransitionsAreAnimated = animated
+        }
+
+        private func transitionRadar(
+            from previousOverlay: RadarTileOverlay,
+            renderer previousRenderer: MKTileOverlayRenderer,
+            to nextRenderer: MKTileOverlayRenderer,
+            on mapView: MKMapView
+        ) {
+            let transitionID = UUID()
+            radarTransitionID = transitionID
+            let stepCount = 8
+
+            // Keep the complete frame underneath while the replacement fades in.
+            for step in 1...stepCount {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + .milliseconds(step * 25)
+                ) { [weak self, weak mapView, weak previousRenderer, weak nextRenderer] in
+                    guard let self,
+                          let mapView,
+                          let previousRenderer,
+                          let nextRenderer,
+                          self.radarTransitionID == transitionID else { return }
+
+                    let progress = Double(step) / Double(stepCount)
+                    nextRenderer.alpha = self.opacity * progress
+                    previousRenderer.alpha = self.opacity * (1 - progress)
+
+                    if step == stepCount {
+                        self.radarTransitionID = nil
+                        mapView.removeOverlay(previousOverlay)
+                    }
+                }
+            }
+        }
+
+        private func finishRadarTransition(on mapView: MKMapView) {
+            radarTransitionID = nil
+            radarRenderer?.alpha = opacity
+            mapView.overlays
+                .compactMap { $0 as? RadarTileOverlay }
+                .filter { overlay in
+                    overlay !== radarOverlay && overlay !== pendingRadarOverlay
+                }
+                .forEach(mapView.removeOverlay)
         }
 
         func unloadRadar(from mapView: MKMapView, isLoadingFrame: Binding<Bool>?) {
+            radarTransitionID = nil
             radarRenderer = nil
+            radarOverlay = nil
             pendingRadarRenderer = nil
             pendingRadarOverlay = nil
             pendingRequestID = nil
+            pendingTileIsReady = false
+            pendingLoadingBinding = nil
+            pendingTransitionIsAnimated = false
+            frameTransitionsAreAnimated = false
             mapView.overlays
                 .compactMap { $0 as? RadarTileOverlay }
                 .forEach(mapView.removeOverlay)
@@ -904,6 +1047,7 @@ private struct NativeRadarMap: UIViewRepresentable {
             if tileOverlay === pendingRadarOverlay {
                 renderer.alpha = 0
                 pendingRadarRenderer = renderer
+                showPendingRadarIfReady(on: mapView)
             } else {
                 renderer.alpha = opacity
                 radarRenderer = renderer
@@ -954,26 +1098,87 @@ private final class RadarTileOverlay: MKTileOverlay {
     private let frame: RadarFrame?
     private let prefetchFrames: [RadarFrame]
     private let requestID: UUID
-    private let onFirstTileLoaded: (UUID) -> Void
-    private var hasLoadedFirstTile = false
-    private let firstTileLock = NSLock()
+    private let onInitialTilesLoaded: (UUID) -> Void
+    private let tileLoadLock = NSLock()
+    private var tileLoadsInFlight = 0
+    private var successfulTileLoads = 0
+    private var tileLoadGeneration = 0
+    private var hasReportedInitialTiles = false
+    private var initialBatchIsCached = true
+    private var readinessWorkItem: DispatchWorkItem?
+    private var initialTilePaths: [TilePathKey: MKTileOverlayPath] = [:]
     private let webMercatorExtent = 20_037_508.342789244
     private static let posixLocale = Locale(identifier: "en_US_POSIX")
     private static let tileCache: NSCache<NSURL, NSData> = {
         let cache = NSCache<NSURL, NSData>()
-        cache.countLimit = 800
-        cache.totalCostLimit = 64 * 1_024 * 1_024
+        cache.countLimit = 500
+        cache.totalCostLimit = 32 * 1_024 * 1_024
         return cache
     }()
     private static let tileSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.requestCachePolicy = .returnCacheDataElseLoad
         configuration.urlCache = URLCache(
-            memoryCapacity: 32 * 1_024 * 1_024,
-            diskCapacity: 128 * 1_024 * 1_024
+            memoryCapacity: 0,
+            diskCapacity: 96 * 1_024 * 1_024
         )
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 20
+        configuration.httpMaximumConnectionsPerHost = 6
         return URLSession(configuration: configuration)
     }()
+    private static let formatterLock = NSLock()
+    private static let modelInitializationCache: NSCache<NSDate, NSString> = {
+        let cache = NSCache<NSDate, NSString>()
+        cache.countLimit = 256
+        return cache
+    }()
+    private static let wmsTimestampCache: NSCache<NSDate, NSString> = {
+        let cache = NSCache<NSDate, NSString>()
+        cache.countLimit = 256
+        return cache
+    }()
+    private static let modelInitializationFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = posixLocale
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMddHHmm"
+        return formatter
+    }()
+    private static let wmsTimestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    private typealias TileCompletion = (Data?, (any Error)?, Bool) -> Void
+    private static let requestLock = NSLock()
+    private static var inFlightRequests: [URL: InFlightTileRequest] = [:]
+
+    private final class InFlightTileRequest {
+        var completions: [TileCompletion]
+        var task: URLSessionDataTask?
+        var priority: Float
+
+        init(completion: @escaping TileCompletion, priority: Float) {
+            completions = [completion]
+            self.priority = priority
+        }
+    }
+
+    private struct TilePathKey: Hashable {
+        let x: Int
+        let y: Int
+        let z: Int
+        let scale: Int
+
+        init(_ path: MKTileOverlayPath) {
+            x = path.x
+            y = path.y
+            z = path.z
+            scale = Int((path.contentScaleFactor * 100).rounded())
+        }
+    }
 
     init(
         refreshToken: Int,
@@ -981,14 +1186,14 @@ private final class RadarTileOverlay: MKTileOverlay {
         frame: RadarFrame?,
         prefetchFrames: [RadarFrame],
         requestID: UUID,
-        onFirstTileLoaded: @escaping (UUID) -> Void
+        onInitialTilesLoaded: @escaping (UUID) -> Void
     ) {
         self.refreshToken = refreshToken
         self.radarSource = radarSource
         self.frame = frame
         self.prefetchFrames = prefetchFrames
         self.requestID = requestID
-        self.onFirstTileLoaded = onFirstTileLoaded
+        self.onInitialTilesLoaded = onInitialTilesLoaded
         super.init(urlTemplate: nil)
         tileSize = CGSize(width: 256, height: 256)
         minimumZ = 3
@@ -1004,14 +1209,14 @@ private final class RadarTileOverlay: MKTileOverlay {
         at path: MKTileOverlayPath,
         result: @escaping (Data?, (any Error)?) -> Void
     ) {
+        beginTileLoad(path: path)
         let url = tileURL(for: path, frame: frame)
-        Self.loadTileData(from: url) { [weak self] data, error in
+        Self.loadTileData(from: url) { [weak self] data, error, wasCached in
             result(data, error)
-            guard let self, let data, !data.isEmpty else { return }
-            self.reportFirstTileLoadedIfNeeded()
-            self.prefetchFrames.forEach { frame in
-                Self.loadTileData(from: self.tileURL(for: path, frame: frame)) { _, _ in }
-            }
+            self?.finishTileLoad(
+                succeeded: data?.isEmpty == false,
+                wasCached: wasCached
+            )
         }
     }
 
@@ -1043,11 +1248,16 @@ private final class RadarTileOverlay: MKTileOverlay {
     }
 
     private func modelInitializationKey(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Self.posixLocale
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyyMMddHHmm"
-        return formatter.string(from: date)
+        let cacheKey = date as NSDate
+        if let cached = Self.modelInitializationCache.object(forKey: cacheKey) {
+            return cached as String
+        }
+
+        Self.formatterLock.lock()
+        let value = Self.modelInitializationFormatter.string(from: date)
+        Self.formatterLock.unlock()
+        Self.modelInitializationCache.setObject(value as NSString, forKey: cacheKey)
+        return value
     }
 
     private func nwsURL(for path: MKTileOverlayPath, frame: RadarFrame?) -> URL {
@@ -1060,6 +1270,10 @@ private final class RadarTileOverlay: MKTileOverlay {
         let bbox = [minX, minY, maxX, maxY]
             .map { String(format: "%.3f", locale: Self.posixLocale, $0) }
             .joined(separator: ",")
+        let displayScale = min(max(path.contentScaleFactor, 1), 2)
+        let pixelDimension = Int(
+            (tileSize.width * displayScale).rounded()
+        )
 
         var components = URLComponents(
             string: "https://opengeo.ncep.noaa.gov/geoserver/conus/conus_bref_qcd/ows"
@@ -1074,54 +1288,183 @@ private final class RadarTileOverlay: MKTileOverlay {
             URLQueryItem(name: "transparent", value: "true"),
             URLQueryItem(name: "srs", value: "EPSG:3857"),
             URLQueryItem(name: "bbox", value: bbox),
-            URLQueryItem(name: "width", value: "256"),
-            URLQueryItem(name: "height", value: "256"),
+            URLQueryItem(name: "width", value: String(pixelDimension)),
+            URLQueryItem(name: "height", value: String(pixelDimension)),
             URLQueryItem(name: "tiled", value: "true"),
             URLQueryItem(name: "drashRefresh", value: String(refreshToken))
         ]
         if let frameTime = frame?.validTime {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             components.queryItems?.append(
-                URLQueryItem(name: "time", value: formatter.string(from: frameTime))
+                URLQueryItem(name: "time", value: wmsTimestamp(for: frameTime))
             )
         }
         return components.url!
     }
 
-    private func reportFirstTileLoadedIfNeeded() {
-        firstTileLock.lock()
-        let shouldReport = !hasLoadedFirstTile
-        hasLoadedFirstTile = true
-        firstTileLock.unlock()
-        if shouldReport {
-            onFirstTileLoaded(requestID)
+    private func wmsTimestamp(for date: Date) -> String {
+        let cacheKey = date as NSDate
+        if let cached = Self.wmsTimestampCache.object(forKey: cacheKey) {
+            return cached as String
+        }
+
+        Self.formatterLock.lock()
+        let value = Self.wmsTimestampFormatter.string(from: date)
+        Self.formatterLock.unlock()
+        Self.wmsTimestampCache.setObject(value as NSString, forKey: cacheKey)
+        return value
+    }
+
+    private func beginTileLoad(path: MKTileOverlayPath) {
+        tileLoadLock.lock()
+        tileLoadsInFlight += 1
+        tileLoadGeneration &+= 1
+        initialTilePaths[TilePathKey(path)] = path
+        let workItem = readinessWorkItem
+        readinessWorkItem = nil
+        tileLoadLock.unlock()
+        workItem?.cancel()
+    }
+
+    private func finishTileLoad(succeeded: Bool, wasCached: Bool) {
+        tileLoadLock.lock()
+        tileLoadsInFlight = max(tileLoadsInFlight - 1, 0)
+        initialBatchIsCached = initialBatchIsCached && wasCached
+        if succeeded {
+            successfulTileLoads += 1
+        }
+
+        guard tileLoadsInFlight == 0,
+              successfulTileLoads > 0,
+              !hasReportedInitialTiles else {
+            tileLoadLock.unlock()
+            return
+        }
+
+        let generation = tileLoadGeneration
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.reportInitialTilesIfSettled(generation: generation)
+        }
+        let quietPeriodMilliseconds = initialBatchIsCached ? 40 : 150
+        readinessWorkItem = workItem
+        tileLoadLock.unlock()
+        // MapKit requests the visible tile grid in a burst. A short quiet period
+        // prevents the first cached tile from promoting an otherwise empty frame.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + .milliseconds(quietPeriodMilliseconds),
+            execute: workItem
+        )
+    }
+
+    private func reportInitialTilesIfSettled(generation: Int) {
+        tileLoadLock.lock()
+        guard tileLoadsInFlight == 0,
+              tileLoadGeneration == generation,
+              successfulTileLoads > 0,
+              !hasReportedInitialTiles else {
+            tileLoadLock.unlock()
+            return
+        }
+        hasReportedInitialTiles = true
+        readinessWorkItem = nil
+        let paths = Array(initialTilePaths.values)
+        tileLoadLock.unlock()
+        onInitialTilesLoaded(requestID)
+        prefetchNearbyFrames(at: paths)
+    }
+
+    private func prefetchNearbyFrames(at paths: [MKTileOverlayPath]) {
+        guard !paths.isEmpty, !prefetchFrames.isEmpty else { return }
+
+        for frame in prefetchFrames {
+            for path in paths {
+                let url = tileURL(for: path, frame: frame)
+                Self.loadTileData(
+                    from: url,
+                    priority: URLSessionTask.lowPriority
+                ) { _, _, _ in }
+            }
         }
     }
 
     private static func loadTileData(
         from url: URL,
-        completion: @escaping (Data?, (any Error)?) -> Void
+        priority: Float = URLSessionTask.highPriority,
+        completion: @escaping TileCompletion
     ) {
         if let cached = tileCache.object(forKey: url as NSURL) {
-            completion(cached as Data, nil)
+            completion(cached as Data, nil, true)
             return
         }
 
-        tileSession.dataTask(with: url) { data, response, error in
+        requestLock.lock()
+        if let request = inFlightRequests[url] {
+            request.completions.append(completion)
+            request.priority = max(request.priority, priority)
+            request.task?.priority = request.priority
+            requestLock.unlock()
+            return
+        }
+        inFlightRequests[url] = InFlightTileRequest(
+            completion: completion,
+            priority: priority
+        )
+        requestLock.unlock()
+
+        fetchTileData(from: url, retriesRemaining: 1)
+    }
+
+    private static func fetchTileData(from url: URL, retriesRemaining: Int) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        let task = tileSession.dataTask(with: request) { data, response, error in
             guard error == nil,
                   let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode),
                   let data,
                   !data.isEmpty,
-                  UIImage(data: data) != nil else {
-                completion(nil, error ?? URLError(.cannotDecodeContentData))
+                  data.prefix(Self.pngSignature.count) == Self.pngSignature else {
+                if retriesRemaining > 0 {
+                    DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                        deadline: .now() + .milliseconds(150)
+                    ) {
+                        fetchTileData(
+                            from: url,
+                            retriesRemaining: retriesRemaining - 1
+                        )
+                    }
+                } else {
+                    finishTileRequest(
+                        for: url,
+                        data: nil,
+                        error: error ?? URLError(.cannotDecodeContentData)
+                    )
+                }
                 return
             }
             tileCache.setObject(data as NSData, forKey: url as NSURL, cost: data.count)
-            completion(data, nil)
+            finishTileRequest(for: url, data: data, error: nil)
         }
-        .resume()
+
+        requestLock.lock()
+        guard let inFlightRequest = inFlightRequests[url] else {
+            requestLock.unlock()
+            return
+        }
+        inFlightRequest.task = task
+        task.priority = inFlightRequest.priority
+        requestLock.unlock()
+        task.resume()
+    }
+
+    private static func finishTileRequest(
+        for url: URL,
+        data: Data?,
+        error: (any Error)?
+    ) {
+        requestLock.lock()
+        let completions = inFlightRequests.removeValue(forKey: url)?.completions ?? []
+        requestLock.unlock()
+        completions.forEach { $0(data, error, false) }
     }
 
 }

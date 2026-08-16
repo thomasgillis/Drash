@@ -19,7 +19,7 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
   </tr>
 </table>
 
-## Included in 0.0.2
+## Included in 0.0.3
 
 - An expandable next-24-hours card powered by high-resolution NOAA HRRR guidance
 - Per-place daily switching between the seven-day NWS outlook and HRRR's shorter horizon
