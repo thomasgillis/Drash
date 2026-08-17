@@ -1406,12 +1406,12 @@ private struct DailyRainChance: View {
                 .foregroundStyle(ForecastPalette.secondary)
             Label("\(chance)%", systemImage: "drop.fill")
                 .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(ForecastPalette.blue)
+                .foregroundStyle(ForecastPalette.rainChance)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(minWidth: 68, alignment: .leading)
-        .background(ForecastPalette.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+        .background(ForecastPalette.rainChance.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityLabel("\(chance) percent peak precipitation chance")
     }
 }
@@ -1423,22 +1423,43 @@ private struct DailyTemperaturePair: View {
     var body: some View {
         HStack(spacing: 8) {
             if let daytime = row.daytime {
-                temperature(label: "High", period: daytime, color: .orange)
+                temperature(
+                    label: "High",
+                    icon: "thermometer.high",
+                    period: daytime,
+                    color: .orange
+                )
             }
             if let nighttime = row.nighttime {
-                temperature(label: "Low", period: nighttime, color: ForecastPalette.blue)
+                temperature(
+                    label: "Low",
+                    icon: "thermometer.low",
+                    period: nighttime,
+                    color: ForecastPalette.lowTemperature
+                )
             }
         }
     }
 
-    private func temperature(label: String, period: ForecastPeriod, color: Color) -> some View {
+    private func temperature(
+        label: String,
+        icon: String,
+        period: ForecastPeriod,
+        color: Color
+    ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(ForecastPalette.secondary)
-            Text("\(period.temperature(in: unit))°")
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(color)
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 10)
+                    .accessibilityHidden(true)
+                Text("\(period.temperature(in: unit))°")
+                    .font(.headline.weight(.bold).monospacedDigit())
+            }
+            .foregroundStyle(color)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -1514,6 +1535,14 @@ private enum ForecastPalette {
     static let precipitation = adaptive(
         light: UIColor(red: 0.28, green: 0.66, blue: 0.96, alpha: 1),
         dark: UIColor(red: 0.4, green: 0.78, blue: 1, alpha: 1)
+    )
+    static let lowTemperature = adaptive(
+        light: UIColor(red: 0.34, green: 0.29, blue: 0.7, alpha: 1),
+        dark: UIColor(red: 0.68, green: 0.62, blue: 1, alpha: 1)
+    )
+    static let rainChance = adaptive(
+        light: UIColor(red: 0, green: 0.47, blue: 0.56, alpha: 1),
+        dark: UIColor(red: 0.3, green: 0.82, blue: 0.86, alpha: 1)
     )
     static let badgeBackground = adaptive(
         light: UIColor(red: 0.08, green: 0.15, blue: 0.24, alpha: 0.88),

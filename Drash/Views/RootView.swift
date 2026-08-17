@@ -49,9 +49,8 @@ struct RootView: View {
         .tint(.blue)
         .task {
             await model.restoreLastSession(lowPowerMode: isLowPowerModeEnabled)
-            if !requestDeviceLocationIfNeeded() {
-                model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
-            }
+            requestDeviceLocationIfNeeded()
+            model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
         }
         .task(id: AutomaticForecastRefreshContext(
             isActive: scenePhase == .active,
@@ -65,9 +64,8 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
-                if !requestDeviceLocationIfNeeded() {
-                    model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
-                }
+                requestDeviceLocationIfNeeded()
+                model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
             case .background:
                 model.suspendNetworkWork()
             case .inactive:
@@ -81,10 +79,9 @@ struct RootView: View {
         }
     }
 
-    @discardableResult
-    private func requestDeviceLocationIfNeeded() -> Bool {
-        guard model.shouldRequestDeviceLocation(lowPowerMode: isLowPowerModeEnabled) else { return false }
-        return locationManager.requestLocation()
+    private func requestDeviceLocationIfNeeded() {
+        guard model.shouldRequestDeviceLocation(lowPowerMode: isLowPowerModeEnabled) else { return }
+        locationManager.requestLocation()
     }
 
     private func runAutomaticForecastRefresh() async {
@@ -98,9 +95,8 @@ struct RootView: View {
             }
 
             guard scenePhase == .active else { return }
-            if !requestDeviceLocationIfNeeded() {
-                model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
-            }
+            requestDeviceLocationIfNeeded()
+            model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
         }
     }
 }

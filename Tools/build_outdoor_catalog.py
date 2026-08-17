@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Drash's compact offline crag and Colorado 13er search catalog."""
+"""Build Drash's compact offline crag and Colorado summit search catalog."""
 
 from __future__ import annotations
 
@@ -25,11 +25,12 @@ GNIS_COLORADO_URL = (
 )
 USA_UUID = "1db1e8ba-a40e-587c-88a4-64f5ea814b8e"
 OUTPUT = pathlib.Path(__file__).parents[1] / "Drash/Resources/outdoor-places.sqlite"
+FOURTEENERS = pathlib.Path(__file__).with_name("colorado_fourteeners.json")
 CRAG_CACHE = pathlib.Path("/private/tmp/drash-outdoor-crags.json")
 STATE_CACHE = pathlib.Path("/private/tmp/drash-outdoor-state-cache")
 USER_AGENT = "Drash catalog builder/1.0"
-CATALOG_VERSION = 1
-SCHEMA_VERSION = 1
+CATALOG_VERSION = 2
+SCHEMA_VERSION = 2
 APPLICATION_ID = 0x44524153  # "DRAS"
 
 STATE_CODES = {
@@ -177,6 +178,23 @@ def fetch_thirteeners() -> list[dict]:
     return entries
 
 
+def load_fourteeners() -> list[dict]:
+    entries = json.loads(FOURTEENERS.read_text())
+    if len(entries) != 58:
+        raise ValueError(f"Expected 58 named Colorado 14ers, found {len(entries)}")
+    for entry in entries:
+        if (
+            entry.get("state") != "CO"
+            or entry.get("kind") != "fourteener"
+            or not 14_000 <= entry.get("elevationFeet", 0) < 15_000
+            or not -90 <= entry.get("latitude", 91) <= 90
+            or not -180 <= entry.get("longitude", 181) <= 180
+        ):
+            raise ValueError(f"Invalid Colorado 14er entry: {entry!r}")
+    print(f"Colorado: {len(entries)} named 14ers")
+    return entries
+
+
 def normalize(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", value)
     return "".join(character for character in decomposed if not unicodedata.combining(character)).casefold()
@@ -254,7 +272,7 @@ def write_database(entries: list[dict], generated_at: str) -> None:
                 state TEXT NOT NULL,
                 latitude REAL NOT NULL,
                 longitude REAL NOT NULL,
-                kind TEXT NOT NULL CHECK (kind IN ('crag', 'thirteener')),
+                kind TEXT NOT NULL CHECK (kind IN ('crag', 'thirteener', 'fourteener')),
                 elevation_feet INTEGER,
                 normalized_name TEXT NOT NULL
             ) WITHOUT ROWID;
@@ -311,7 +329,7 @@ def main() -> None:
     parser.add_argument(
         "--from-json",
         type=pathlib.Path,
-        help="Convert an existing version-1 JSON catalog without downloading source data.",
+        help="Convert an existing version-2 JSON catalog without downloading source data.",
     )
     parser.add_argument(
         "--refresh",
@@ -340,7 +358,8 @@ def main() -> None:
         CRAG_CACHE.write_text(json.dumps(crags, ensure_ascii=False, separators=(",", ":")))
 
     thirteeners = fetch_thirteeners()
-    entries = crags + thirteeners
+    fourteeners = load_fourteeners()
+    entries = crags + thirteeners + fourteeners
     entries.sort(key=lambda item: (item["kind"], item["name"].casefold(), item["state"], item["id"]))
     if database_matches(entries):
         print("Outdoor catalog source data is unchanged; keeping the existing database.")

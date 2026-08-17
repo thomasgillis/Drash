@@ -5,6 +5,7 @@ struct OutdoorCatalogEntry: Hashable, Identifiable, Sendable {
     enum Kind: String, Hashable, Sendable {
         case crag
         case thirteener
+        case fourteener
     }
 
     let id: String
@@ -21,8 +22,13 @@ struct OutdoorCatalogEntry: Hashable, Identifiable, Sendable {
             state: state,
             latitude: latitude,
             longitude: longitude,
-            kind: kind == .thirteener ? .summit : .crag,
-            elevation: elevationFeet.map { Elevation(feet: $0, source: .terrainModel) }
+            kind: kind == .crag ? .crag : .summit,
+            elevation: elevationFeet.map {
+                Elevation(
+                    feet: $0,
+                    source: kind == .fourteener ? .summitCatalog : .terrainModel
+                )
+            }
         )
     }
 }
@@ -99,8 +105,8 @@ private final class OutdoorCatalogDatabase {
     }
 
     private static let applicationID: Int64 = 0x44524153 // "DRAS"
-    private static let schemaVersion: Int64 = 1
-    private static let catalogVersion = 1
+    private static let schemaVersion: Int64 = 2
+    private static let catalogVersion = 2
     private static let maximumEntryCount = 250_000
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -159,7 +165,7 @@ private final class OutdoorCatalogDatabase {
                     SELECT COUNT(*) FROM entries
                     WHERE latitude < -90 OR latitude > 90
                        OR longitude < -180 OR longitude > 180
-                       OR kind NOT IN ('crag', 'thirteener')
+                       OR kind NOT IN ('crag', 'thirteener', 'fourteener')
                     """) == 0 else {
                     throw OutdoorCatalogError.invalidDatabase
                 }
@@ -184,9 +190,15 @@ private final class OutdoorCatalogDatabase {
         normalizedQuery: String,
         limit: Int
     ) throws -> [OutdoorCatalogEntry] {
-        let categoryText = kind == .crag
-            ? "crag climbing area"
-            : "13er thirteener summit"
+        let categoryText: String
+        switch kind {
+        case .crag:
+            categoryText = "crag climbing area"
+        case .thirteener:
+            categoryText = "13er 13ers thirteener thirteeners summit"
+        case .fourteener:
+            categoryText = "14er 14ers fourteener fourteeners summit colorado"
+        }
         let searchableTerms = normalizedQuery
             .split(separator: " ")
             .map(String.init)
@@ -389,6 +401,10 @@ final class OutdoorCatalogStore: ObservableObject {
 
     func matchingThirteeners(_ query: String, limit: Int = 8) -> [OutdoorCatalogEntry] {
         matching(query, kind: .thirteener, limit: limit)
+    }
+
+    func matchingFourteeners(_ query: String, limit: Int = 8) -> [OutdoorCatalogEntry] {
+        matching(query, kind: .fourteener, limit: limit)
     }
 
     func refresh() async {

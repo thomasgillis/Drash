@@ -291,13 +291,13 @@ final class DrashUITests: XCTestCase {
         let searchField = app.searchFields["City, crag, summit, or ZIP code"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "42,932")
+            NSPredicate(format: "label CONTAINS %@", "42,990")
         ).firstMatch.exists)
 
         searchField.tap()
-        searchField.typeText("Hagues Peak")
-        XCTAssertTrue(app.staticTexts["Hagues Peak"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["13er · 13,543 ft · CO"].exists)
+        searchField.typeText("Mount Elbert")
+        XCTAssertTrue(app.staticTexts["Mount Elbert"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["14er · 14,440 ft · CO"].exists)
     }
 
     func testRadarObservedHistory() throws {
@@ -583,7 +583,7 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(app.buttons["NWS"].isSelected)
     }
 
-    func testReadmeBoulderFahrenheitScreenshots() throws {
+    func testReadmeSanFranciscoFahrenheitScreenshots() throws {
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
 
@@ -593,10 +593,10 @@ final class DrashUITests: XCTestCase {
         let search = app.searchFields["City, crag, summit, or ZIP code"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
-        search.typeText("Boulder, CO")
-        let boulder = app.buttons["place-search-result"].firstMatch
-        XCTAssertTrue(boulder.waitForExistence(timeout: 20))
-        boulder.tap()
+        search.typeText("San Francisco, CA")
+        let sanFrancisco = app.buttons["place-search-result"].firstMatch
+        XCTAssertTrue(sanFrancisco.waitForExistence(timeout: 20))
+        sanFrancisco.tap()
 
         tabBar.buttons["Settings"].tap()
         XCTAssertTrue(app.buttons["Fahrenheit"].waitForExistence(timeout: 5))
@@ -609,7 +609,7 @@ final class DrashUITests: XCTestCase {
         )
 
         let forecastScreenshot = XCTAttachment(screenshot: app.screenshot())
-        forecastScreenshot.name = "README Boulder forecast Fahrenheit"
+        forecastScreenshot.name = "README San Francisco forecast Fahrenheit"
         forecastScreenshot.lifetime = .keepAlways
         add(forecastScreenshot)
 
@@ -631,7 +631,7 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(chartHeading.isHittable)
 
         let chartScreenshot = XCTAttachment(screenshot: app.screenshot())
-        chartScreenshot.name = "README Boulder chart Fahrenheit"
+        chartScreenshot.name = "README San Francisco chart Fahrenheit"
         chartScreenshot.lifetime = .keepAlways
         add(chartScreenshot)
 
@@ -642,7 +642,7 @@ final class DrashUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["precipitation-intensity-legend"].exists)
 
         let radarScreenshot = XCTAttachment(screenshot: app.screenshot())
-        radarScreenshot.name = "README Boulder radar"
+        radarScreenshot.name = "README San Francisco radar"
         radarScreenshot.lifetime = .keepAlways
         add(radarScreenshot)
     }

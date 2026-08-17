@@ -25,7 +25,6 @@
 		100000000000000000000010 /* DrashUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000012 /* DrashUITests.swift */; };
 		100000000000000000000011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* Assets.xcassets */; };
 		100000000000000000000012 /* Services/HRRRClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* Services/HRRRClient.swift */; };
-		100000000000000000000013 /* Models/SummitCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* Models/SummitCatalog.swift */; };
 		100000000000000000000014 /* Services/OutdoorCatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* Services/OutdoorCatalogStore.swift */; };
 		100000000000000000000015 /* outdoor-places.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* outdoor-places.sqlite */; };
 		100000000000000000000016 /* WidgetWeatherData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* WidgetWeatherData.swift */; };
@@ -87,7 +86,6 @@
 		200000000000000000000013 /* DrashUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DrashUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		200000000000000000000015 /* Services/HRRRClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/HRRRClient.swift; sourceTree = "<group>"; };
-		200000000000000000000016 /* Models/SummitCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/SummitCatalog.swift; sourceTree = "<group>"; };
 		200000000000000000000017 /* Services/OutdoorCatalogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/OutdoorCatalogStore.swift; sourceTree = "<group>"; };
 		200000000000000000000018 /* outdoor-places.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = Resources/outdoor-places.sqlite; sourceTree = "<group>"; };
 		200000000000000000000019 /* WidgetWeatherData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetWeatherData.swift; sourceTree = "<group>"; };
@@ -139,7 +137,6 @@
 			children = (
 				200000000000000000000001 /* DrashApp.swift */,
 				200000000000000000000002 /* Models/WeatherModels.swift */,
-				200000000000000000000016 /* Models/SummitCatalog.swift */,
 				200000000000000000000003 /* Models/NWSResponses.swift */,
 				200000000000000000000004 /* Services/NWSClient.swift */,
 				200000000000000000000015 /* Services/HRRRClient.swift */,
@@ -341,7 +338,6 @@
 			files = (
 				100000000000000000000001 /* DrashApp.swift in Sources */,
 				100000000000000000000002 /* Models/WeatherModels.swift in Sources */,
-				100000000000000000000013 /* Models/SummitCatalog.swift in Sources */,
 				100000000000000000000003 /* Models/NWSResponses.swift in Sources */,
 				100000000000000000000004 /* Services/NWSClient.swift in Sources */,
 				100000000000000000000012 /* Services/HRRRClient.swift in Sources */,
@@ -444,7 +440,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -469,7 +465,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -487,7 +483,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.DrashUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -504,7 +500,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.DrashUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -529,7 +525,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -556,7 +552,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.0.6;
+				MARKETING_VERSION = 0.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

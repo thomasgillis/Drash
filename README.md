@@ -8,10 +8,10 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/boulder-forecast.png" alt="Drash forecast for Boulder, Colorado" width="260"></td>
-    <td><img src="docs/screenshots/boulder-precipitation.png" alt="Temperature and expected precipitation chart for Boulder, Colorado" width="260"></td>
-    <td><img src="docs/screenshots/boulder-radar.png" alt="Observed NWS radar around Boulder, Colorado" width="260"></td>
-    <td><img src="docs/screenshots/widget.png" alt="Drash weather widget on the iPhone Home Screen" width="260"></td>
+    <td><img src="docs/screenshots/san-francisco-forecast.png" alt="Drash forecast for San Francisco, California" width="260"></td>
+    <td><img src="docs/screenshots/san-francisco-precipitation.png" alt="Temperature and expected precipitation chart for San Francisco, California" width="260"></td>
+    <td><img src="docs/screenshots/san-francisco-radar.png" alt="Observed NWS radar around San Francisco, California" width="260"></td>
+    <td><img src="docs/screenshots/san-francisco-widget.png" alt="Drash San Francisco weather widget on the iPhone Home Screen" width="260"></td>
   </tr>
   <tr>
     <td align="center">Forecast</td>
@@ -21,7 +21,7 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
   </tr>
 </table>
 
-## Included in 0.0.6
+## Included in 0.0.7
 
 - A shared HRRR/NWS source setting for current conditions and the expandable next-24-hours card
 - Per-place daily switching between the seven-day NWS outlook and HRRR's shorter horizon
@@ -63,7 +63,7 @@ The app calls `api.weather.gov` directly for NWS forecasts, observations, and al
 
 Drash defaults current conditions and the expandable next-24-hours forecast to NOAA HRRR model output from Open-Meteo's GFS & HRRR API. A persistent setting switches both together to the nearest NWS observation and NWS hourly forecast. Daily forecasts independently default to HRRR, and each place retains its choice if you switch to the seven-day NWS outlook. HRRR covers the continental United States at roughly 3 km resolution, updates hourly, and normally provides 18 hours of guidance, extending to 48 hours for the 00Z, 06Z, 12Z, and 18Z runs.
 
-The Places tab searches all 58 named Colorado fourteeners, Colorado thirteeners from the public-domain USGS Geographic Names Information System, and continental-U.S. climbing areas from OpenBeta's open climbing database. Crags and 13ers ship in an on-device SQLite catalog, so search text never waits on or gets sent to either service and the full catalog is not retained in memory. A manual refresh button validates and atomically installs a newer catalog when one is published. Surveyed 14er elevations and terrain-model elevations for 13ers are sent explicitly to Open-Meteo so HRRR temperature, dew point, pressure, and related conditions are statistically downscaled to the peak instead of the model grid's average height. For locations without stored elevation, Open-Meteo's 90-meter Copernicus terrain model supplies it and Drash retains the resolved value for subsequent refreshes. Summit current conditions are model guidance; nearby valley weather-station observations are not presented as summit measurements.
+The Places tab searches all 58 named Colorado fourteeners, Colorado thirteeners from the public-domain USGS Geographic Names Information System, and continental-U.S. climbing areas from OpenBeta's open climbing database. Crags, 13ers, and 14ers ship in an on-device SQLite catalog, so search text never waits on or gets sent to either service and the full catalog is not retained in memory. A manual refresh button validates and atomically installs a newer catalog when one is published. Surveyed 14er elevations and terrain-model elevations for 13ers are sent explicitly to Open-Meteo so HRRR temperature, dew point, pressure, and related conditions are statistically downscaled to the peak instead of the model grid's average height. For locations without stored elevation, Open-Meteo's 90-meter Copernicus terrain model supplies it and Drash retains the resolved value for subsequent refreshes. Summit current conditions are model guidance; nearby valley weather-station observations are not presented as summit measurements.
 
 Drash does not poll in the background. While the app is active, it automatically checks forecast freshness and refreshes the selected forecast sources after 15 minutes. It requests only a single kilometer-accuracy location fix when the previous current-location forecast is at least 30 minutes old. The visible Radar tab refreshes NWS frames every five minutes and checks for a newer HRRR model run every 15 minutes. Low Power Mode stretches forecast, location, and radar refreshes to one hour. The app cancels in-flight forecast work when backgrounded, destroys the radar map when Radar is hidden or the app is inactive, and disables automatic radar playback in Low Power Mode. Pull to refresh, manual radar frame controls, and the radar refresh button remain available. Persisted per-installation request budgets and provider cooldowns protect both the NWS and Open-Meteo forecast APIs from rapid retries.
 

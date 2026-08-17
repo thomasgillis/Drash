@@ -13,7 +13,7 @@ struct PlacesView: View {
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        let summitMatches = SummitCatalog.matching(query)
+        let fourteenerMatches = outdoorCatalog.matchingFourteeners(query)
         let thirteenerMatches = outdoorCatalog.matchingThirteeners(query)
         let cragMatches = outdoorCatalog.matchingCrags(query)
 
@@ -63,13 +63,33 @@ struct PlacesView: View {
             }
 
             if !query.isEmpty {
-                if !summitMatches.isEmpty || !thirteenerMatches.isEmpty {
+                Section("Places") {
+                    if searchService.isSearching {
+                        HStack { ProgressView(); Text("Searching…") }
+                    }
+                    ForEach(searchService.results, id: \.self) { item in
+                        Button {
+                            select(item)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.name ?? item.placemark.locality ?? "Place")
+                                    .foregroundStyle(.primary)
+                                Text([item.placemark.locality, item.placemark.administrativeArea]
+                                    .compactMap { $0 }.joined(separator: ", "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityIdentifier("place-search-result")
+                    }
+                }
+
+                if !fourteenerMatches.isEmpty || !thirteenerMatches.isEmpty {
                     Section("Summits") {
-                        ForEach(summitMatches.prefix(8)) { summit in
+                        ForEach(fourteenerMatches) { summit in
                             Button {
                                 select(summit)
                             } label: {
-                                SummitRow(summit: summit, altitudeUnit: model.altitudeUnit)
+                                OutdoorSearchRow(result: summit, altitudeUnit: model.altitudeUnit)
                             }
                         }
                         ForEach(thirteenerMatches) { summit in
@@ -91,26 +111,6 @@ struct PlacesView: View {
                                 OutdoorSearchRow(result: crag, altitudeUnit: model.altitudeUnit)
                             }
                         }
-                    }
-                }
-
-                Section("Places") {
-                    if searchService.isSearching {
-                        HStack { ProgressView(); Text("Searching…") }
-                    }
-                    ForEach(searchService.results, id: \.self) { item in
-                        Button {
-                            select(item)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(item.name ?? item.placemark.locality ?? "Place")
-                                    .foregroundStyle(.primary)
-                                Text([item.placemark.locality, item.placemark.administrativeArea]
-                                    .compactMap { $0 }.joined(separator: ", "))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .accessibilityIdentifier("place-search-result")
                     }
                 }
             }
@@ -235,43 +235,12 @@ struct PlacesView: View {
         showForecast()
     }
 
-    private func select(_ summit: Summit) {
-        model.select(summit.weatherLocation)
-        query = ""
-        searchFocused = false
-        dismissSearch()
-        showForecast()
-    }
-
     private func select(_ result: OutdoorCatalogEntry) {
         model.select(result.weatherLocation)
         query = ""
         searchFocused = false
         dismissSearch()
         showForecast()
-    }
-}
-
-private struct SummitRow: View {
-    let summit: Summit
-    let altitudeUnit: AltitudeUnit
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "mountain.2.fill")
-                .foregroundStyle(.blue)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(summit.name)
-                    .foregroundStyle(.primary)
-                Text(
-                    "\(Elevation(feet: summit.elevationFeet, source: .summitCatalog).formatted(for: altitudeUnit)) · \(summit.range)"
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -304,6 +273,11 @@ private struct OutdoorSearchRow: View {
                 Elevation(feet: $0, source: .terrainModel).formatted(for: altitudeUnit) + " · "
             } ?? ""
             return "13er · \(elevation)\(result.state)"
+        case .fourteener:
+            let elevation = result.elevationFeet.map {
+                Elevation(feet: $0, source: .summitCatalog).formatted(for: altitudeUnit) + " · "
+            } ?? ""
+            return "14er · \(elevation)\(result.state)"
         }
     }
 }
