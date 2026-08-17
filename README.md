@@ -11,22 +11,26 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
     <td><img src="docs/screenshots/boulder-forecast.png" alt="Drash forecast for Boulder, Colorado" width="260"></td>
     <td><img src="docs/screenshots/boulder-precipitation.png" alt="Temperature and expected precipitation chart for Boulder, Colorado" width="260"></td>
     <td><img src="docs/screenshots/boulder-radar.png" alt="Observed NWS radar around Boulder, Colorado" width="260"></td>
+    <td><img src="docs/screenshots/my-location.png" alt="My Location in Drash saved places" width="260"></td>
   </tr>
   <tr>
     <td align="center">Forecast</td>
     <td align="center">Temperature &amp; precipitation</td>
     <td align="center">Observed NWS radar</td>
+    <td align="center">My Location</td>
   </tr>
 </table>
 
-## Included in 0.0.4
+## Included in 0.0.5
 
-- An expandable next-24-hours card powered by high-resolution NOAA HRRR guidance
+- A shared HRRR/NWS source setting for current conditions and the expandable next-24-hours card
 - Per-place daily switching between the seven-day NWS outlook and HRRR's shorter horizon
 - Detailed day/night forecasts and active NWS alerts
 - A tappable 24-hour temperature and expected-precipitation chart
 - Radar switching between HRRR simulated reflectivity and recent NWS observations, with playback and map controls
-- Current location, U.S. place/ZIP search, and saved places
+- A dedicated My Location place that follows fresh GPS fixes, plus U.S. place/ZIP search and saved places
+- Fast offline search for Colorado 13ers, all 58 named Colorado 14ers, and continental-U.S. climbing areas, with manual catalog refresh
+- Summit forecasts corrected to each peak's elevation
 - Fahrenheit and Celsius, accessible labels, battery-conscious refreshes, and no accounts, ads, analytics, or third-party tracking
 
 ## Install it on your iPhone
@@ -56,9 +60,11 @@ Personal-team signing is free but expires periodically, so Xcode may need to reb
 
 The app calls `api.weather.gov` directly for NWS forecasts, observations, and alerts. The NWS API is free public data and requires an identifying `User-Agent`; this project sends `Drash/1.0 (personal iOS weather app)`. Before public distribution, update that value in `Drash/Services/NWSClient.swift` to include a real app website or support email.
 
-Drash retrieves NOAA HRRR model output from Open-Meteo's GFS & HRRR API for the expandable next-24-hours forecast while continuing to use NWS observations and alerts. Daily forecasts also default to HRRR, and each place retains its choice if you switch to the seven-day NWS outlook. HRRR covers the continental United States at roughly 3 km resolution, updates hourly, and normally provides 18 hours of guidance, extending to 48 hours for the 00Z, 06Z, 12Z, and 18Z runs.
+Drash defaults current conditions and the expandable next-24-hours forecast to NOAA HRRR model output from Open-Meteo's GFS & HRRR API. A persistent setting switches both together to the nearest NWS observation and NWS hourly forecast. Daily forecasts independently default to HRRR, and each place retains its choice if you switch to the seven-day NWS outlook. HRRR covers the continental United States at roughly 3 km resolution, updates hourly, and normally provides 18 hours of guidance, extending to 48 hours for the 00Z, 06Z, 12Z, and 18Z runs.
 
-Drash does not poll in the background. It reuses a recently saved forecast for 15 minutes, requests only a single kilometer-accuracy location fix when the previous current-location forecast is at least 30 minutes old, and stretches both intervals to one hour while Low Power Mode is enabled. It cancels in-flight forecast work when backgrounded, destroys the radar map when Radar is hidden or the app is inactive, and disables automatic radar playback in Low Power Mode. Pull to refresh, manual radar frame controls, and the radar refresh button remain available.
+The Places tab searches all 58 named Colorado fourteeners, Colorado thirteeners from the public-domain USGS Geographic Names Information System, and continental-U.S. climbing areas from OpenBeta's open climbing database. Crags and 13ers ship in an on-device SQLite catalog, so search text never waits on or gets sent to either service and the full catalog is not retained in memory. A manual refresh button validates and atomically installs a newer catalog when one is published. Surveyed 14er elevations and terrain-model elevations for 13ers are sent explicitly to Open-Meteo so HRRR temperature, dew point, pressure, and related conditions are statistically downscaled to the peak instead of the model grid's average height. For locations without stored elevation, Open-Meteo's 90-meter Copernicus terrain model supplies it and Drash retains the resolved value for subsequent refreshes. Summit current conditions are model guidance; nearby valley weather-station observations are not presented as summit measurements.
+
+Drash does not poll in the background. While the app is active, it automatically checks forecast freshness and refreshes the selected forecast sources after 15 minutes. It requests only a single kilometer-accuracy location fix when the previous current-location forecast is at least 30 minutes old. The visible Radar tab refreshes NWS frames every five minutes and checks for a newer HRRR model run every 15 minutes. Low Power Mode stretches forecast, location, and radar refreshes to one hour. The app cancels in-flight forecast work when backgrounded, destroys the radar map when Radar is hidden or the app is inactive, and disables automatic radar playback in Low Power Mode. Pull to refresh, manual radar frame controls, and the radar refresh button remain available. Persisted per-installation request budgets and provider cooldowns protect both the NWS and Open-Meteo forecast APIs from rapid retries.
 
 The on-device app name is **Drash**. **Drash Weather** is the recommended public App Store title so its purpose is immediately clear, while the shorter name remains beneath the Home Screen icon.
 
@@ -82,5 +88,7 @@ NWS point forecasts cover the United States and its territories. The Radar tab d
 - `Drash/Views`: forecast, alerts, radar, places, and settings
 - `Drash/SupportingFiles`: weather presentation helpers
 - `DrashUITests`: end-to-end simulator regression tests
+
+Every non-bot push to `main` runs `.github/workflows/refresh-outdoor-catalog.yml`, which rebuilds and commits `Drash/Resources/outdoor-places.sqlite`. To refresh it locally, run `python3 Tools/build_outdoor_catalog.py` and commit the generated database. The builder downloads the OpenBeta and GNIS sources, normalizes the searchable names, verifies SQLite integrity, and atomically replaces the seed file. Installed apps download that same file when the user taps **Refresh outdoor places** and reject damaged, incompatible, empty, oversized, or older databases before replacing their working copy.
 
 Requires iOS 18 or newer.

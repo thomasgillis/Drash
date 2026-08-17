@@ -29,6 +29,49 @@ enum ForecastModel: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum WeatherLocationKind: String, Codable, Sendable {
+    case place
+    case crag
+    case summit
+}
+
+enum AltitudeUnit: String, CaseIterable, Identifiable, Sendable {
+    case feet
+    case meters
+
+    var id: String { rawValue }
+}
+
+struct Elevation: Codable, Hashable, Sendable {
+    enum Source: String, Codable, Sendable {
+        case summitCatalog
+        case terrainModel
+    }
+
+    let meters: Double
+    let source: Source
+
+    init(meters: Double, source: Source) {
+        self.meters = meters
+        self.source = source
+    }
+
+    init(feet: Int, source: Source) {
+        self.init(meters: Double(feet) * 0.3048, source: source)
+    }
+
+    var feet: Int { Int((meters / 0.3048).rounded()) }
+
+    func formatted(for unit: AltitudeUnit) -> String {
+        switch unit {
+        case .feet:
+            return feet.formatted() + " ft"
+        case .meters:
+            return Int(meters.rounded()).formatted() + " m"
+        }
+    }
+}
+
 struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
     let id: UUID
     var name: String
@@ -37,6 +80,8 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
     var longitude: Double
     var isCurrentLocation: Bool
     var forecastModel: ForecastModel
+    var kind: WeatherLocationKind
+    var elevation: Elevation?
 
     init(
         id: UUID = UUID(),
@@ -45,7 +90,9 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         latitude: Double,
         longitude: Double,
         isCurrentLocation: Bool = false,
-        forecastModel: ForecastModel = .hrrr
+        forecastModel: ForecastModel = .hrrr,
+        kind: WeatherLocationKind = .place,
+        elevation: Elevation? = nil
     ) {
         self.id = id
         self.name = name
@@ -54,6 +101,8 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         self.longitude = longitude
         self.isCurrentLocation = isCurrentLocation
         self.forecastModel = forecastModel
+        self.kind = kind
+        self.elevation = elevation
     }
 
     var coordinate: CLLocationCoordinate2D {
@@ -73,6 +122,8 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         case longitude
         case isCurrentLocation
         case forecastModel
+        case kind
+        case elevation
     }
 
     init(from decoder: Decoder) throws {
@@ -84,6 +135,8 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         longitude = try container.decode(Double.self, forKey: .longitude)
         isCurrentLocation = try container.decode(Bool.self, forKey: .isCurrentLocation)
         forecastModel = try container.decodeIfPresent(ForecastModel.self, forKey: .forecastModel) ?? .hrrr
+        kind = try container.decodeIfPresent(WeatherLocationKind.self, forKey: .kind) ?? .place
+        elevation = try container.decodeIfPresent(Elevation.self, forKey: .elevation)
     }
 }
 
@@ -95,6 +148,8 @@ struct WeatherSnapshot: Codable, Sendable {
     let hourly: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]?
     let observation: Observation?
+    let observationModel: ForecastModel?
+    let hrrrCurrentTemperature: QuantitativeValue?
     let station: ObservationStation?
     let alerts: [WeatherAlert]
     let alertsUnavailable: Bool?

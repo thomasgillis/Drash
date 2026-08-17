@@ -5,6 +5,7 @@ enum HRRRServiceError: LocalizedError {
     case invalidResponse
     case unavailable(String?)
     case server(status: Int)
+    case rateLimited(retryAt: Date)
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +20,8 @@ enum HRRRServiceError: LocalizedError {
             return "HRRR is available only within its continental U.S. forecast domain."
         case .server(let status):
             return "The HRRR forecast provider returned an error (\(status))."
+        case .rateLimited(let retryAt):
+            return "The HRRR forecast provider is temporarily rate-limited. Drash will try again after \(retryAt.formatted(date: .omitted, time: .shortened))."
         }
     }
 }
@@ -29,6 +32,7 @@ struct HRRRForecastData: Sendable {
     let hourly: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
     let observation: Observation?
+    let elevation: Elevation?
 }
 
 actor WeatherClient {
@@ -42,28 +46,124 @@ actor WeatherClient {
         self.hrrrClient = hrrrClient
     }
 
-    func weather(for location: WeatherLocation, unit: TemperatureUnit) async throws -> WeatherSnapshot {
-        switch location.forecastModel {
-        case .nws:
-            async let nwsWeather = nwsClient.weather(for: location, unit: unit)
-            async let hrrrForecast = hrrrClient.forecast(for: location, unit: unit)
-            let (nws, hrrr) = try await (nwsWeather, hrrrForecast)
+    func weather(
+        for location: WeatherLocation,
+        unit: TemperatureUnit,
+        hourlyModel: ForecastModel,
+        forceHRRRRetry: Bool = false,
+        onCoreForecast: @escaping @Sendable (WeatherSnapshot) async -> Void
+    ) async throws -> WeatherSnapshot {
+        let needsHRRR = location.forecastModel == .hrrr || hourlyModel == .hrrr
+        let needsNWSDaily = location.forecastModel == .nws
+        let needsNWSHourly = hourlyModel == .nws
+
+        async let hrrrResult: HRRRForecastData? = needsHRRR
+            ? hrrrClient.forecast(
+                for: location,
+                unit: unit,
+                forceProviderRetry: forceHRRRRetry
+            )
+            : nil
+        async let nwsDailyResult: NWSDailyForecast? = needsNWSDaily
+            ? nwsClient.dailyForecast(for: location, unit: unit)
+            : nil
+        async let nwsHourlyResult: NWSHourlyForecast? = needsNWSHourly
+            ? nwsClient.hourlyForecast(for: location, unit: unit)
+            : nil
+        let (hrrr, nwsDaily, nwsHourly) = try await (
+            hrrrResult,
+            nwsDailyResult,
+            nwsHourlyResult
+        )
+
+        let daily = location.forecastModel == .hrrr ? hrrr?.daily : nwsDaily?.periods
+        let hourly = hourlyModel == .hrrr ? hrrr?.hourly : nwsHourly?.periods
+        guard let daily, let hourly, !daily.isEmpty, !hourly.isEmpty else {
+            throw HRRRServiceError.invalidResponse
+        }
+
+        var resolvedLocation = nwsDaily?.location ?? nwsHourly?.location ?? location
+        resolvedLocation.elevation = resolvedLocation.elevation
+            ?? hrrr?.elevation
+            ?? nwsHourly?.elevation
+
+        let core = WeatherSnapshot(
+            location: resolvedLocation,
+            updatedAt: hourlyModel == .hrrr
+                ? hrrr?.updatedAt ?? Date()
+                : nwsHourly?.updatedAt ?? Date(),
+            forecastOffice: nwsDaily?.forecastOffice ?? nwsHourly?.forecastOffice,
+            daily: daily,
+            hourly: hourly,
+            precipitationAmounts: hourlyModel == .hrrr
+                ? hrrr?.precipitationAmounts
+                : nwsHourly?.precipitationAmounts,
+            observation: hourlyModel == .hrrr ? hrrr?.observation : nil,
+            observationModel: hourlyModel,
+            hrrrCurrentTemperature: hourlyModel == .hrrr
+                ? hrrr?.observation?.temperature
+                : nil,
+            station: nil,
+            alerts: [],
+            alertsUnavailable: nil,
+            hourlyForecastModel: hourlyModel
+        )
+
+        try Task.checkCancellation()
+        await onCoreForecast(core)
+        try Task.checkCancellation()
+        return try await enrichWithNWSContext(core, hourlyModel: hourlyModel)
+    }
+
+    private func enrichWithNWSContext(
+        _ core: WeatherSnapshot,
+        hourlyModel: ForecastModel
+    ) async throws -> WeatherSnapshot {
+        do {
+            let context = try await nwsClient.weatherContext(
+                for: core.location,
+                includeStationObservation: hourlyModel == .nws && core.location.kind != .summit
+            )
+            try Task.checkCancellation()
+            var resolvedLocation = context.location
+            resolvedLocation.elevation = resolvedLocation.elevation ?? core.location.elevation
 
             return WeatherSnapshot(
-                location: nws.location,
-                updatedAt: hrrr.updatedAt,
-                forecastOffice: nws.forecastOffice,
-                daily: nws.daily,
-                hourly: hrrr.hourly,
-                precipitationAmounts: hrrr.precipitationAmounts,
-                observation: nws.observation ?? hrrr.observation,
-                station: nws.station,
-                alerts: nws.alerts,
-                alertsUnavailable: nws.alertsUnavailable,
-                hourlyForecastModel: .hrrr
+                location: resolvedLocation,
+                updatedAt: hourlyModel == .nws
+                    ? context.observation?.timestamp ?? core.updatedAt
+                    : core.updatedAt,
+                forecastOffice: context.forecastOffice ?? core.forecastOffice,
+                daily: core.daily,
+                hourly: core.hourly,
+                precipitationAmounts: core.precipitationAmounts,
+                observation: hourlyModel == .nws
+                    ? context.observation ?? core.observation
+                    : core.observation,
+                observationModel: hourlyModel,
+                hrrrCurrentTemperature: core.hrrrCurrentTemperature,
+                station: hourlyModel == .nws ? context.station : nil,
+                alerts: context.alerts,
+                alertsUnavailable: context.alertsUnavailable,
+                hourlyForecastModel: core.hourlyForecastModel
             )
-        case .hrrr:
-            return try await hrrrClient.weather(for: location, unit: unit)
+        } catch {
+            try Task.checkCancellation()
+            return WeatherSnapshot(
+                location: core.location,
+                updatedAt: core.updatedAt,
+                forecastOffice: core.forecastOffice,
+                daily: core.daily,
+                hourly: core.hourly,
+                precipitationAmounts: core.precipitationAmounts,
+                observation: core.observation,
+                observationModel: hourlyModel,
+                hrrrCurrentTemperature: core.hrrrCurrentTemperature,
+                station: nil,
+                alerts: [],
+                alertsUnavailable: true,
+                hourlyForecastModel: core.hourlyForecastModel
+            )
         }
     }
 }
@@ -72,38 +172,41 @@ actor HRRRClient {
     static let shared = HRRRClient()
 
     private let session: URLSession
+    private let defaults: UserDefaults
     private let decoder = JSONDecoder()
-    private let nwsClient: NWSClient
     private var dateFormatters: [String: DateFormatter] = [:]
+    private var requestDates: [Date]
+    private var providerCooldownUntil: Date?
+    private let requestWindow: TimeInterval = 60 * 60
+    // A Drash request currently costs about 2.5 Open-Meteo API calls because it
+    // asks for 25 variables. This cap keeps one app installation below roughly
+    // 250 weighted calls per hour, far under the provider's 5,000-call limit.
+    private let maximumRequestsPerWindow = 100
 
-    init(session: URLSession = .shared, nwsClient: NWSClient = .shared) {
+    private enum RateLimitKeys {
+        static let requestDates = "hrrrRequestDates"
+        static let providerCooldownUntil = "hrrrProviderCooldownUntil"
+    }
+
+    init(session: URLSession = .shared, defaults: UserDefaults = .standard) {
         self.session = session
-        self.nwsClient = nwsClient
+        self.defaults = defaults
+        requestDates = defaults.array(forKey: RateLimitKeys.requestDates)?.compactMap {
+            ($0 as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+        } ?? []
+        let cooldownTimestamp = defaults.double(forKey: RateLimitKeys.providerCooldownUntil)
+        providerCooldownUntil = cooldownTimestamp > 0
+            ? Date(timeIntervalSince1970: cooldownTimestamp)
+            : nil
     }
 
-    func weather(for requestedLocation: WeatherLocation, unit: TemperatureUnit) async throws -> WeatherSnapshot {
-        async let forecast = forecast(for: requestedLocation, unit: unit)
-        async let context = nwsClient.weatherContext(for: requestedLocation)
-        let (hrrr, nws) = try await (forecast, context)
-
-        return WeatherSnapshot(
-            location: nws.location,
-            updatedAt: hrrr.updatedAt,
-            forecastOffice: nws.forecastOffice,
-            daily: hrrr.daily,
-            hourly: hrrr.hourly,
-            precipitationAmounts: hrrr.precipitationAmounts,
-            observation: nws.observation ?? hrrr.observation,
-            station: nws.station,
-            alerts: nws.alerts,
-            alertsUnavailable: nws.alertsUnavailable,
-            hourlyForecastModel: .hrrr
-        )
-    }
-
-    func forecast(for requestedLocation: WeatherLocation, unit: TemperatureUnit) async throws -> HRRRForecastData {
+    func forecast(
+        for requestedLocation: WeatherLocation,
+        unit: TemperatureUnit,
+        forceProviderRetry: Bool = false
+    ) async throws -> HRRRForecastData {
         let url = try forecastURL(for: requestedLocation, unit: unit)
-        let response = try await fetch(url)
+        let response = try await fetch(url, forceProviderRetry: forceProviderRetry)
         let timeZone = TimeZone(identifier: response.timezone) ?? .current
         let hourly = hourlyPeriods(from: response, unit: unit, timeZone: timeZone)
         guard !hourly.isEmpty else { throw HRRRServiceError.invalidResponse }
@@ -116,7 +219,9 @@ actor HRRRClient {
             precipitationAmounts: precipitationAmounts(from: response, timeZone: timeZone),
             observation: response.current.flatMap {
                 observation(from: $0, unit: unit, timeZone: timeZone)
-            }
+            },
+            elevation: requestedLocation.elevation
+                ?? response.elevation.map { Elevation(meters: $0, source: .terrainModel) }
         )
     }
 
@@ -125,7 +230,7 @@ actor HRRRClient {
             throw HRRRServiceError.invalidURL
         }
 
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "latitude", value: String(format: "%.4f", location.latitude)),
             URLQueryItem(name: "longitude", value: String(format: "%.4f", location.longitude)),
             URLQueryItem(name: "models", value: "ncep_hrrr_conus"),
@@ -159,20 +264,36 @@ actor HRRRClient {
             URLQueryItem(name: "timezone", value: "auto"),
             URLQueryItem(name: "forecast_hours", value: "48")
         ]
+        if let elevation = location.elevation?.meters {
+            queryItems.append(
+                URLQueryItem(name: "elevation", value: String(format: "%.1f", elevation))
+            )
+        }
+        components.queryItems = queryItems
 
         guard let url = components.url else { throw HRRRServiceError.invalidURL }
         return url
     }
 
-    private func fetch(_ url: URL) async throws -> HRRRResponse {
+    private func fetch(_ url: URL, forceProviderRetry: Bool) async throws -> HRRRResponse {
+        let requestedAt = Date()
+        try registerRequest(at: requestedAt, forceProviderRetry: forceProviderRetry)
+
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Drash/1.0 (personal iOS weather app)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 20
 
         let (data, response) = try await session.data(for: request)
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else {
             throw HRRRServiceError.invalidResponse
+        }
+        if http.statusCode == 429 {
+            let retryAt = retryDate(from: http, relativeTo: requestedAt)
+            providerCooldownUntil = max(providerCooldownUntil ?? .distantPast, retryAt)
+            persistRateLimitState()
+            throw HRRRServiceError.rateLimited(retryAt: retryAt)
         }
         guard (200...299).contains(http.statusCode) else {
             let reason = try? decoder.decode(HRRRErrorResponse.self, from: data).reason
@@ -187,6 +308,59 @@ actor HRRRClient {
         } catch {
             throw HRRRServiceError.invalidResponse
         }
+    }
+
+    private func registerRequest(at date: Date, forceProviderRetry: Bool) throws {
+        if !forceProviderRetry,
+           let providerCooldownUntil,
+           date < providerCooldownUntil {
+            throw HRRRServiceError.rateLimited(retryAt: providerCooldownUntil)
+        }
+        if providerCooldownUntil != nil {
+            providerCooldownUntil = nil
+            persistRateLimitState()
+        }
+
+        let windowStart = date.addingTimeInterval(-requestWindow)
+        requestDates.removeAll { $0 <= windowStart }
+        guard requestDates.count < maximumRequestsPerWindow else {
+            let retryAt = requestDates[0].addingTimeInterval(requestWindow)
+            throw HRRRServiceError.rateLimited(retryAt: retryAt)
+        }
+        // Reserve the request before suspending for URLSession. Actor methods
+        // are reentrant, so recording it here also covers concurrent callers.
+        requestDates.append(date)
+        persistRateLimitState()
+    }
+
+    private func persistRateLimitState() {
+        defaults.set(
+            requestDates.map(\.timeIntervalSince1970),
+            forKey: RateLimitKeys.requestDates
+        )
+        if let providerCooldownUntil {
+            defaults.set(
+                providerCooldownUntil.timeIntervalSince1970,
+                forKey: RateLimitKeys.providerCooldownUntil
+            )
+        } else {
+            defaults.removeObject(forKey: RateLimitKeys.providerCooldownUntil)
+        }
+    }
+
+    private func retryDate(from response: HTTPURLResponse, relativeTo date: Date) -> Date {
+        guard let value = response.value(forHTTPHeaderField: "Retry-After") else {
+            return date.addingTimeInterval(requestWindow)
+        }
+        if let seconds = TimeInterval(value), seconds >= 0 {
+            return date.addingTimeInterval(seconds)
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss z"
+        return formatter.date(from: value) ?? date.addingTimeInterval(requestWindow)
     }
 
     private func hourlyPeriods(
@@ -407,6 +581,7 @@ private struct HRRRErrorResponse: Decodable {
 
 private struct HRRRResponse: Decodable {
     let timezone: String
+    let elevation: Double?
     let current: HRRRCurrent?
     let hourly: HRRRHourly
     let daily: HRRRDaily?

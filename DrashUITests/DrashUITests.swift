@@ -130,8 +130,9 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["7-day forecast"].waitForExistence(timeout: 5))
 
         tabBar.buttons["Places"].tap()
-        XCTAssertTrue(app.buttons["Use current location"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.searchFields["City, town, or ZIP code"].exists)
+        XCTAssertTrue(app.buttons["My Location"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.searchFields["City, crag, summit, or ZIP code"].exists)
+        XCTAssertTrue(app.buttons["Refresh outdoor places"].exists)
 
         app.terminate()
         app.launch()
@@ -143,7 +144,7 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(app.maps.firstMatch.waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["LIVE NWS RADAR"].exists)
         XCTAssertTrue(app.staticTexts["Precipitation"].exists)
-        XCTAssertTrue(app.buttons["Center radar on location"].exists)
+        XCTAssertTrue(app.buttons["Center radar on GPS location"].exists)
         XCTAssertTrue(app.buttons["Refresh radar"].exists)
         XCTAssertTrue(app.buttons["Radar options"].exists)
         XCTAssertFalse(app.sliders["Radar opacity"].exists)
@@ -218,6 +219,7 @@ final class DrashUITests: XCTestCase {
         let verticalDragEnd = chart.coordinate(
             withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)
         )
+        let chartMinYBeforeVerticalDrag = chart.frame.minY
         verticalDragStart.press(forDuration: 0.05, thenDragTo: verticalDragEnd)
 
         let chartAfterVerticalDrag = app.descendants(matching: .any)
@@ -227,6 +229,11 @@ final class DrashUITests: XCTestCase {
             chartAfterVerticalDrag.value as? String,
             "No time selected",
             "A vertical drag should remain available to the detail view instead of selecting a chart time"
+        )
+        XCTAssertLessThan(
+            chartAfterVerticalDrag.frame.minY,
+            chartMinYBeforeVerticalDrag - 20,
+            "A vertical drag over the chart should continue scrolling the forecast"
         )
 
         chartAfterVerticalDrag.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.55)).tap()
@@ -261,6 +268,42 @@ final class DrashUITests: XCTestCase {
             return currentChart.value as? String == "No time selected"
         }, object: app)
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 12), .completed)
+
+        for _ in 0..<6 where !hourlySummary.isHittable {
+            forecastScrollView.swipeDown(velocity: .slow)
+        }
+        XCTAssertTrue(hourlySummary.isHittable)
+        hourlySummary.tap()
+        XCTAssertEqual(hourlySummary.value as? String, "Collapsed")
+
+        hourlySummary.tap()
+        XCTAssertEqual(hourlySummary.value as? String, "Expanded")
+    }
+
+    func testMyLocationIsAlwaysAvailableAsSavedPlace() throws {
+        let placesTab = app.tabBars.buttons["Places"]
+        XCTAssertTrue(placesTab.waitForExistence(timeout: 10))
+        placesTab.tap()
+
+        let myLocation = app.buttons["My Location"]
+        XCTAssertTrue(myLocation.waitForExistence(timeout: 5))
+    }
+
+    func testOfflineOutdoorCatalogSearch() throws {
+        let placesTab = app.tabBars.buttons["Places"]
+        XCTAssertTrue(placesTab.waitForExistence(timeout: 10))
+        placesTab.tap()
+
+        let searchField = app.searchFields["City, crag, summit, or ZIP code"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "42,932")
+        ).firstMatch.exists)
+
+        searchField.tap()
+        searchField.typeText("Hagues Peak")
+        XCTAssertTrue(app.staticTexts["Hagues Peak"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["13er · 13,543 ft · CO"].exists)
     }
 
     func testRadarObservedHistory() throws {
@@ -381,17 +424,22 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(currentConditions.waitForExistence(timeout: 5))
         let restingMinY = currentConditions.frame.minY
 
-        let start = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.32))
-        let end = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.82))
+        let start = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.18))
+        let end = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.92))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
 
         let returnedToTop = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
-                abs(currentConditions.frame.minY - restingMinY) < 3
+                abs(currentConditions.frame.minY - restingMinY) < 1
             },
             object: nil
         )
         XCTAssertEqual(XCTWaiter.wait(for: [returnedToTop], timeout: 3), .completed)
+
+        let remainedAtTop = expectation(description: "Forecast remains at its resting position")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { remainedAtTop.fulfill() }
+        XCTAssertEqual(XCTWaiter.wait(for: [remainedAtTop], timeout: 2), .completed)
+        XCTAssertLessThan(abs(currentConditions.frame.minY - restingMinY), 1)
     }
 
     func testPlaceSearchSelectsNewForecast() throws {
@@ -399,7 +447,7 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
         tabBar.buttons["Places"].tap()
 
-        let search = app.searchFields["City, town, or ZIP code"]
+        let search = app.searchFields["City, crag, summit, or ZIP code"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
         search.typeText("Laramie, WY")
@@ -443,6 +491,47 @@ final class DrashUITests: XCTestCase {
         )
     }
 
+    func testColoradoFourteenerSearchUsesSummitElevation() throws {
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
+
+        tabBar.buttons["Settings"].tap()
+        let meters = app.buttons["Meters"]
+        XCTAssertTrue(meters.waitForExistence(timeout: 5))
+        meters.tap()
+        XCTAssertTrue(meters.isSelected)
+
+        tabBar.buttons["Places"].tap()
+
+        let search = app.searchFields["City, crag, summit, or ZIP code"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Mount Elbert")
+
+        let mountElbert = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Mount Elbert")
+        ).firstMatch
+        XCTAssertTrue(mountElbert.waitForExistence(timeout: 5))
+        mountElbert.tap()
+
+        XCTAssertTrue(tabBar.buttons["Forecast"].isSelected)
+        XCTAssertTrue(
+            app.navigationBars.matching(
+                NSPredicate(format: "identifier CONTAINS[c] %@", "Mount Elbert")
+            ).firstMatch.waitForExistence(timeout: 35)
+        )
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS[c] %@", "HRRR downscaled to 4,401 m")
+            ).firstMatch.waitForExistence(timeout: 5)
+        )
+
+        tabBar.buttons["Settings"].tap()
+        let feet = app.buttons["Feet"]
+        XCTAssertTrue(feet.waitForExistence(timeout: 5))
+        feet.tap()
+    }
+
     func testAutomaticHRRRHourlyAndDailyModelPersistsForPlace() throws {
         XCTAssertTrue(
             app.descendants(matching: .any)["current-conditions-card"]
@@ -479,9 +568,7 @@ final class DrashUITests: XCTestCase {
 
         if !hrrr.isSelected {
             hrrr.tap()
-            let defaultHRRRForecast = app.staticTexts.matching(
-                NSPredicate(format: "label MATCHES %@", "[0-9]+-day HRRR forecast")
-            ).firstMatch
+            let defaultHRRRForecast = app.staticTexts["daily-forecast-heading-hrrr"]
             XCTAssertTrue(defaultHRRRForecast.waitForExistence(timeout: 35))
         }
         XCTAssertTrue(hrrr.isSelected)
@@ -491,9 +578,7 @@ final class DrashUITests: XCTestCase {
 
         hrrr.tap()
         XCTAssertTrue(hrrr.isSelected)
-        let hrrrDailyForecast = app.staticTexts.matching(
-            NSPredicate(format: "label MATCHES %@", "[0-9]+-day HRRR forecast")
-        ).firstMatch
+        let hrrrDailyForecast = app.staticTexts["daily-forecast-heading-hrrr"]
         XCTAssertTrue(hrrrDailyForecast.waitForExistence(timeout: 35))
         XCTAssertFalse(app.alerts["Couldn’t update weather"].exists)
 
@@ -516,13 +601,18 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
 
         tabBar.buttons["Places"].tap()
-        let search = app.searchFields["City, town, or ZIP code"]
+        XCTAssertTrue(app.buttons["My Location"].waitForExistence(timeout: 5))
+
+        let myLocationScreenshot = XCTAttachment(screenshot: app.screenshot())
+        myLocationScreenshot.name = "README My Location place"
+        myLocationScreenshot.lifetime = .keepAlways
+        add(myLocationScreenshot)
+
+        let search = app.searchFields["City, crag, summit, or ZIP code"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
         search.typeText("Boulder, CO")
-        let boulder = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS[c] %@", "Boulder")
-        ).firstMatch
+        let boulder = app.buttons["place-search-result"].firstMatch
         XCTAssertTrue(boulder.waitForExistence(timeout: 20))
         boulder.tap()
 

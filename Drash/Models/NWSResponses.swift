@@ -26,6 +26,7 @@ struct GridpointResponse: Decodable {
     let properties: Properties
 
     struct Properties: Decodable {
+        let elevation: QuantitativeValue?
         let quantitativePrecipitation: GridQuantity?
     }
 

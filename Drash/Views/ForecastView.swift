@@ -8,10 +8,6 @@ struct ForecastView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedAlert: WeatherAlert?
 
-    private enum ScrollAnchor: Hashable {
-        case top
-    }
-
     var body: some View {
         ZStack {
             background.ignoresSafeArea()
@@ -21,64 +17,58 @@ struct ForecastView: View {
                     .tint(ForecastPalette.blue)
                     .foregroundStyle(ForecastPalette.ink)
             } else if let snapshot = model.snapshot {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            Color.clear
-                                .frame(height: 0)
-                                .id(ScrollAnchor.top)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        LazyVStack(spacing: 16) {
+                            CurrentConditionsCard(snapshot: snapshot, unit: model.temperatureUnit)
 
-                            LazyVStack(spacing: 16) {
-                                CurrentConditionsCard(snapshot: snapshot, unit: model.temperatureUnit)
-
-                                ForEach(snapshot.alerts) { alert in
-                                    AlertBanner(alert: alert)
-                                        .onTapGesture { selectedAlert = alert }
-                                }
-                                if !snapshot.alertsAreAvailable {
-                                    AlertAvailabilityBanner()
-                                }
-
-                                HourlyForecastCard(
-                                    periods: Array(snapshot.hourly.prefix(24)),
-                                    precipitationAmounts: snapshot.precipitationAmounts ?? [],
-                                    unit: model.temperatureUnit,
-                                    forecastModel: snapshot.effectiveHourlyForecastModel
-                                )
-                                DailyForecastCard(
-                                    periods: snapshot.daily,
-                                    hourlyPeriods: snapshot.hourly,
-                                    precipitationAmounts: snapshot.precipitationAmounts ?? [],
-                                    unit: model.temperatureUnit,
-                                    forecastModel: snapshot.location.forecastModel,
-                                    selectedForecastModel: model.selectedForecastModel,
-                                    isLoading: model.isLoading,
-                                    onSelectForecastModel: model.selectForecastModel
-                                )
-                                ConditionsGrid(snapshot: snapshot, unit: model.temperatureUnit)
-
-                                Text(forecastAttribution(for: snapshot))
-                                    .font(.caption)
-                                    .foregroundStyle(ForecastPalette.secondary)
-                                    .padding(.vertical, 10)
+                            ForEach(snapshot.alerts) { alert in
+                                AlertBanner(alert: alert)
+                                    .onTapGesture { selectedAlert = alert }
                             }
-                            .padding()
-                        }
-                    }
-                    .accessibilityIdentifier("forecast-scroll-view")
-                    .refreshable {
-                        await model.refreshAndWait()
-                        guard !Task.isCancelled else { return }
-                        Task { @MainActor in
-                            await Task.yield()
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo(ScrollAnchor.top, anchor: .top)
+                            if !snapshot.alertsAreAvailable {
+                                AlertAvailabilityBanner()
                             }
+
+                            HourlyForecastCard(
+                                periods: Array(snapshot.hourly.prefix(24)),
+                                precipitationAmounts: snapshot.precipitationAmounts ?? [],
+                                unit: model.temperatureUnit,
+                                forecastModel: snapshot.effectiveHourlyForecastModel
+                            )
+                            DailyForecastCard(
+                                periods: snapshot.daily,
+                                hourlyPeriods: snapshot.hourly,
+                                precipitationAmounts: snapshot.precipitationAmounts ?? [],
+                                unit: model.temperatureUnit,
+                                forecastModel: snapshot.location.forecastModel,
+                                selectedForecastModel: model.selectedForecastModel,
+                                isLoading: model.isLoading,
+                                onSelectForecastModel: model.selectForecastModel
+                            )
+                            ConditionsGrid(
+                                snapshot: snapshot,
+                                unit: model.temperatureUnit,
+                                altitudeUnit: model.altitudeUnit
+                            )
+
+                            Text(forecastAttribution(for: snapshot))
+                                .font(.caption)
+                                .foregroundStyle(ForecastPalette.secondary)
+                                .padding(.vertical, 10)
                         }
+                        .padding()
                     }
                 }
+                .accessibilityIdentifier("forecast-scroll-view")
+                .refreshable {
+                    // Finish the native refresh transaction immediately so its
+                    // pulled-down offset is not preserved while networking runs.
+                    // The view model's loading indicator reports that work instead.
+                    model.refresh()
+                }
             } else if model.isLoading {
-                ProgressView(model.selectedForecastModel.loadingDescription)
+                ProgressView(model.loadingDescription)
                     .tint(ForecastPalette.blue)
                     .foregroundStyle(ForecastPalette.ink)
             } else {
@@ -101,7 +91,8 @@ struct ForecastView: View {
         .navigationTitle(model.snapshot?.location.displayName ?? "Drash")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                if let location = model.snapshot?.location {
+                if let location = model.snapshot?.location,
+                   !location.isCurrentLocation {
                     Button {
                         model.toggleFavorite(location)
                     } label: {
@@ -116,7 +107,7 @@ struct ForecastView: View {
             get: { model.errorMessage != nil && model.snapshot != nil },
             set: { if !$0 { model.dismissError() } }
         )) {
-            Button("Try Again") { model.refresh() }
+            Button("Retry Now") { model.forceRefreshNow() }
             Button("OK", role: .cancel) { model.dismissError() }
         } message: {
             Text(model.errorMessage ?? "Unknown error")
@@ -151,16 +142,26 @@ struct ForecastView: View {
     }
 
     private func forecastAttribution(for snapshot: WeatherSnapshot) -> String {
-        if snapshot.effectiveHourlyForecastModel == .hrrr,
-           snapshot.location.forecastModel == .nws {
-            return "24-hour NOAA HRRR via Open-Meteo · Daily forecast from NWS"
+        let hourlyModel = snapshot.effectiveHourlyForecastModel
+        let dailyModel = snapshot.location.forecastModel
+        let hourlySource = hourlyModel == .hrrr ? "NOAA HRRR via Open-Meteo" : "NWS"
+        let dailySource = dailyModel == .hrrr ? "NOAA HRRR via Open-Meteo" : "NWS"
+        var attribution = hourlyModel == dailyModel
+            ? "Current, 24-hour, and daily forecast from \(hourlySource)"
+            : "Current and 24-hour forecast from \(hourlySource) · Daily forecast from \(dailySource)"
+
+        if snapshot.location.kind == .summit,
+           let elevation = snapshot.location.elevation,
+           hourlyModel == .hrrr || dailyModel == .hrrr {
+            attribution += " · HRRR downscaled to \(elevation.formatted(for: model.altitudeUnit))"
         }
-        return snapshot.location.forecastModel.forecastAttribution
+        return attribution + " · NWS alerts"
     }
 }
 
 private struct EmptyWeatherView: View {
     @EnvironmentObject private var locationManager: LocationManager
+    @EnvironmentObject private var model: WeatherViewModel
     let message: String?
 
     var body: some View {
@@ -169,8 +170,15 @@ private struct EmptyWeatherView: View {
         } description: {
             Text(message ?? "Use your location or add a U.S. place to get started.")
         } actions: {
-            Button("Use My Location") { locationManager.requestLocation() }
-                .buttonStyle(.borderedProminent)
+            if model.selectedLocation != nil {
+                Button("Retry Now") { model.forceRefreshNow() }
+                    .buttonStyle(.borderedProminent)
+                Button("Use My Location") { locationManager.requestLocation() }
+                    .buttonStyle(.bordered)
+            } else {
+                Button("Use My Location") { locationManager.requestLocation() }
+                    .buttonStyle(.borderedProminent)
+            }
         }
         .foregroundStyle(ForecastPalette.ink)
     }
@@ -180,8 +188,31 @@ private struct CurrentConditionsCard: View {
     let snapshot: WeatherSnapshot
     let unit: TemperatureUnit
 
+    private var currentObservation: Observation? {
+        snapshot.observationModel == snapshot.effectiveHourlyForecastModel
+            ? snapshot.observation
+            : nil
+    }
+
     private var currentTemperature: Int? {
-        snapshot.observation?.temperature.temperature(in: unit) ?? snapshot.hourly.first?.temperature(in: unit)
+        if snapshot.effectiveHourlyForecastModel == .hrrr {
+            return snapshot.hrrrCurrentTemperature?.temperature(in: unit)
+                ?? currentObservation?.temperature.temperature(in: unit)
+                ?? snapshot.hourly.first?.temperature(in: unit)
+        }
+        return currentObservation?.temperature.temperature(in: unit)
+            ?? snapshot.hourly.first?.temperature(in: unit)
+    }
+
+    private var currentDescription: String {
+        currentObservation?.displayDescription
+            ?? snapshot.hourly.first?.shortForecast
+            ?? "Current conditions"
+    }
+
+    private var currentWind: String? {
+        currentObservation?.windSpeed.milesPerHour.map { String(format: "%.0f mph", $0) }
+            ?? snapshot.hourly.first?.windSpeed
     }
 
     var body: some View {
@@ -194,29 +225,31 @@ private struct CurrentConditionsCard: View {
                         snapshot.hourly.first?.weatherSecondaryTint ?? ForecastPalette.blue,
                         snapshot.hourly.first?.weatherTertiaryTint ?? ForecastPalette.blue
                     )
-                    .font(.system(size: 64))
+                    .font(.system(size: 76))
+                    .frame(width: 86, height: 82)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(currentTemperature.map { "\($0)°" } ?? "—")
                         .font(.system(size: 64, weight: .thin, design: .rounded))
                         .contentTransition(.numericText())
-                    Text(snapshot.observation?.displayDescription ?? snapshot.hourly.first?.shortForecast ?? "Current conditions")
+                    Text(currentDescription)
                         .font(.headline)
                 }
                 Spacer()
             }
 
             HStack {
-                if let today = snapshot.daily.first {
-                    Label("\(today.precipitationChance)%", systemImage: "drop.fill")
+                if let currentHour = snapshot.hourly.first {
+                    Label("\(currentHour.precipitationChance)%", systemImage: "drop.fill")
                     Spacer()
-                    Label(today.windSpeed, systemImage: "wind")
+                    Label(currentWind ?? currentHour.windSpeed, systemImage: "wind")
                     Spacer()
                     Text("Updated \(snapshot.updatedAt.relativeUpdateDescription)")
                 }
             }
             .font(.caption)
             .foregroundStyle(ForecastPalette.secondary)
+
         }
         .foregroundStyle(ForecastPalette.ink)
         .padding(20)
@@ -281,9 +314,9 @@ private struct HourlyStrip: View {
                     .font(.headline)
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 18) {
+                HStack(spacing: 16) {
                     ForEach(periods) { period in
-                        VStack(spacing: 8) {
+                        VStack(spacing: 7) {
                             Text(period.startTime, format: .dateTime.hour())
                                 .font(.caption)
                             Image(systemName: period.symbolName)
@@ -293,17 +326,20 @@ private struct HourlyStrip: View {
                                     period.weatherSecondaryTint,
                                     period.weatherTertiaryTint
                                 )
-                                .font(.title2)
+                                .font(.system(size: 32))
+                                .frame(height: 38)
                             Text("\(period.temperature(in: unit))°")
                                 .font(.headline)
                             if period.precipitationChance > 0 {
-                                Text("\(period.precipitationChance)%")
-                                    .font(.caption2).foregroundStyle(ForecastPalette.blue)
+                                Label("\(period.precipitationChance)%", systemImage: "drop.fill")
+                                    .labelStyle(.titleAndIcon)
+                                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(ForecastPalette.blue)
                             } else {
-                                Text(" ").font(.caption2)
+                                Text(" ").font(.subheadline)
                             }
                         }
-                        .frame(width: 52)
+                        .frame(width: 60)
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(period.startTime.formatted(date: .omitted, time: .shortened)), \(period.shortForecast), \(period.temperature(in: unit)) degrees, \(period.precipitationChance) percent precipitation")
                     }
@@ -335,11 +371,12 @@ private struct HourlyForecastCard: View {
     let unit: TemperatureUnit
     let forecastModel: ForecastModel
     @State private var isExpanded = false
+    @State private var expandedContentHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.snappy(duration: 0.3)) {
+                withAnimation(.smooth(duration: 0.38)) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -370,22 +407,32 @@ private struct HourlyForecastCard: View {
                 usesCardBackground: false
             )
 
-            if isExpanded {
+            VStack(spacing: 0) {
                 Divider()
                     .overlay(ForecastPalette.grid)
                     .padding(.horizontal)
 
-                VStack {
-                    MeteogramCard(
-                        periods: periods,
-                        precipitationAmounts: precipitationAmounts,
-                        unit: unit,
-                        forecastModel: forecastModel,
-                        usesCardBackground: false
-                    )
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                MeteogramCard(
+                    periods: periods,
+                    precipitationAmounts: precipitationAmounts,
+                    unit: unit,
+                    forecastModel: forecastModel,
+                    usesCardBackground: false,
+                    isVisible: isExpanded
+                )
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { height in
+                guard height > 0, abs(height - expandedContentHeight) > 0.5 else { return }
+                expandedContentHeight = height
+            }
+            .opacity(isExpanded ? 1 : 0)
+            .frame(height: isExpanded ? expandedContentHeight : 0, alignment: .top)
+            .clipped()
+            .allowsHitTesting(isExpanded)
+            .accessibilityHidden(!isExpanded)
         }
         .foregroundStyle(ForecastPalette.ink)
         .glassCard()
@@ -398,6 +445,7 @@ private struct MeteogramCard: View {
     let unit: TemperatureUnit
     let forecastModel: ForecastModel
     let usesCardBackground: Bool
+    let isVisible: Bool
     private let derivedData: MeteogramDerivedData
     @State private var selectedTime: Date?
 
@@ -406,13 +454,15 @@ private struct MeteogramCard: View {
         precipitationAmounts: [PrecipitationAmount],
         unit: TemperatureUnit,
         forecastModel: ForecastModel,
-        usesCardBackground: Bool = true
+        usesCardBackground: Bool = true,
+        isVisible: Bool = true
     ) {
         self.periods = periods
         self.precipitationAmounts = precipitationAmounts
         self.unit = unit
         self.forecastModel = forecastModel
         self.usesCardBackground = usesCardBackground
+        self.isVisible = isVisible
         derivedData = MeteogramDerivedData(
             periods: periods,
             precipitationAmounts: precipitationAmounts,
@@ -576,6 +626,9 @@ private struct MeteogramCard: View {
             .frame(height: 220)
             .onChange(of: periods.map(\.startTime)) { _, _ in
                 selectedTime = nil
+            }
+            .onChange(of: isVisible) { _, visible in
+                if !visible { selectedTime = nil }
             }
             .accessibilityLabel(
                 "Combined 24 hour temperature and precipitation chart. "
@@ -1008,6 +1061,7 @@ private struct DailyForecastCard: View {
             HStack {
                 Label(forecastHeading, systemImage: "calendar")
                     .font(.headline)
+                    .accessibilityIdentifier("daily-forecast-heading-\(forecastModel.rawValue)")
                 Spacer()
                 if isLoading, selectedForecastModel != forecastModel {
                     ProgressView()
@@ -1085,9 +1139,7 @@ private struct DailyForecastCard: View {
     }
 
     private var forecastHeading: String {
-        guard forecastModel == .hrrr else { return "7-day forecast" }
-        let count = dailyRows.count
-        return "\(count)-day HRRR forecast"
+        "\(dailyRows.count)-day forecast"
     }
 }
 
@@ -1121,6 +1173,27 @@ private struct DailyForecastRow: Identifiable {
         [daytime, nighttime]
             .compactMap { $0?.precipitationChance }
             .max() ?? 0
+    }
+
+    var conditionSummary: String {
+        switch (daytime, nighttime) {
+        case let (daytime?, nighttime?):
+            return "During the day, \(summaryFragment(daytime.shortForecast)). "
+                + "At night, \(summaryFragment(nighttime.shortForecast))."
+        case let (daytime?, nil):
+            return "During the day, \(summaryFragment(daytime.shortForecast))."
+        case let (nil, nighttime?):
+            return "At night, \(summaryFragment(nighttime.shortForecast))."
+        case (nil, nil):
+            return "Forecast unavailable"
+        }
+    }
+
+    private func summaryFragment(_ forecast: String) -> String {
+        forecast
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?"))
+            .lowercased()
     }
 }
 
@@ -1204,8 +1277,8 @@ private struct DetailedPeriodCard: View {
                         period.weatherSecondaryTint,
                         period.weatherTertiaryTint
                     )
-                    .font(.system(size: 42))
-                    .frame(width: 52)
+                    .font(.system(size: 54))
+                    .frame(width: 64, height: 60)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(label)
@@ -1257,7 +1330,7 @@ private struct DailyForecastSummary: View {
     let unit: TemperatureUnit
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Text(row.name)
                     .font(.subheadline.weight(.semibold))
@@ -1265,34 +1338,81 @@ private struct DailyForecastSummary: View {
 
                 Spacer(minLength: 4)
 
-                if row.peakPrecipitationChance > 0 {
-                    Label("\(row.peakPrecipitationChance)%", systemImage: "drop.fill")
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .foregroundStyle(ForecastPalette.blue)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(ForecastPalette.blue.opacity(0.09), in: Capsule())
-                        .accessibilityLabel(
-                            "\(row.peakPrecipitationChance) percent peak precipitation chance"
-                        )
-                }
+                DailyIconTransition(row: row)
+            }
 
+            HStack(alignment: .top, spacing: 8) {
                 DailyTemperaturePair(row: row, unit: unit)
 
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(ForecastPalette.secondary.opacity(0.65))
+                if row.peakPrecipitationChance > 0 {
+                    DailyRainChance(chance: row.peakPrecipitationChance)
+                }
+
+                Spacer(minLength: 0)
             }
 
-            HStack(spacing: 8) {
-                if let daytime = row.daytime {
-                    DailyPeriodSummary(label: "Day", period: daytime)
-                }
-                if let nighttime = row.nighttime {
-                    DailyPeriodSummary(label: "Night", period: nighttime)
-                }
+            Text(row.conditionSummary)
+                .font(.caption)
+                .foregroundStyle(ForecastPalette.secondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct DailyIconTransition: View {
+    let row: DailyForecastRow
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let daytime = row.daytime {
+                weatherIcon(label: "Day", period: daytime)
+            }
+
+            if row.daytime != nil, row.nighttime != nil {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(ForecastPalette.secondary.opacity(0.65))
+                    .accessibilityHidden(true)
+            }
+
+            if let nighttime = row.nighttime {
+                weatherIcon(label: "Night", period: nighttime)
             }
         }
+    }
+
+    private func weatherIcon(label: String, period: ForecastPeriod) -> some View {
+        Image(systemName: period.symbolName)
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(
+                period.weatherTint,
+                period.weatherSecondaryTint,
+                period.weatherTertiaryTint
+            )
+            .font(.system(size: 32))
+            .frame(width: 40, height: 40)
+            .accessibilityLabel("\(label), \(period.shortForecast)")
+    }
+}
+
+private struct DailyRainChance: View {
+    let chance: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Rain")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(ForecastPalette.secondary)
+            Label("\(chance)%", systemImage: "drop.fill")
+                .font(.headline.weight(.bold).monospacedDigit())
+                .foregroundStyle(ForecastPalette.blue)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(minWidth: 68, alignment: .leading)
+        .background(ForecastPalette.blue.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityLabel("\(chance) percent peak precipitation chance")
     }
 }
 
@@ -1301,64 +1421,36 @@ private struct DailyTemperaturePair: View {
     let unit: TemperatureUnit
 
     var body: some View {
-        HStack(spacing: 9) {
-            if let nighttime = row.nighttime {
-                temperature(label: "Low", period: nighttime, color: ForecastPalette.blue)
-            }
+        HStack(spacing: 8) {
             if let daytime = row.daytime {
                 temperature(label: "High", period: daytime, color: .orange)
+            }
+            if let nighttime = row.nighttime {
+                temperature(label: "Low", period: nighttime, color: ForecastPalette.blue)
             }
         }
     }
 
     private func temperature(label: String, period: ForecastPeriod, color: Color) -> some View {
-        VStack(alignment: .trailing, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             Text(label)
-                .font(.caption2)
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(ForecastPalette.secondary)
             Text("\(period.temperature(in: unit))°")
-                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .font(.headline.weight(.bold).monospacedDigit())
                 .foregroundStyle(color)
         }
-    }
-}
-
-private struct DailyPeriodSummary: View {
-    let label: String
-    let period: ForecastPeriod
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: period.symbolName)
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(
-                    period.weatherTint,
-                    period.weatherSecondaryTint,
-                    period.weatherTertiaryTint
-                )
-                .frame(width: 22)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(ForecastPalette.secondary)
-                Text(period.shortForecast)
-                    .font(.caption)
-                    .lineLimit(1)
-                    .foregroundStyle(ForecastPalette.ink)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label), \(period.shortForecast)")
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(minWidth: 58, alignment: .leading)
+        .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
 private struct ConditionsGrid: View {
     let snapshot: WeatherSnapshot
     let unit: TemperatureUnit
+    let altitudeUnit: AltitudeUnit
 
     var body: some View {
         let observation = snapshot.observation
@@ -1373,7 +1465,11 @@ private struct ConditionsGrid: View {
             }
             GridRow {
                 MetricTile(title: "Pressure", value: observation?.barometricPressure.hectopascals.map { String(format: "%.0f hPa", $0) } ?? "—", icon: "gauge.with.dots.needle.50percent")
-                MetricTile(title: "Station", value: snapshot.station?.stationIdentifier ?? "NWS", icon: "antenna.radiowaves.left.and.right")
+                MetricTile(
+                    title: "Altitude",
+                    value: snapshot.location.elevation?.formatted(for: altitudeUnit) ?? "—",
+                    icon: "mountain.2.fill"
+                )
             }
         }
     }

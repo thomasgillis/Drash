@@ -25,7 +25,9 @@ struct RootView: View {
             .tag(AppTab.forecast)
 
             NavigationStack {
-                RadarView(isActive: selectedTab == .radar)
+                RadarView(isActive: selectedTab == .radar) {
+                    selectedTab = .forecast
+                }
             }
             .tabItem { Label("Radar", systemImage: "dot.radiowaves.left.and.right") }
             .tag(AppTab.radar)
@@ -50,6 +52,12 @@ struct RootView: View {
             if !requestDeviceLocationIfNeeded() {
                 model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
             }
+        }
+        .task(id: AutomaticForecastRefreshContext(
+            isActive: scenePhase == .active,
+            isLowPowerModeEnabled: isLowPowerModeEnabled
+        )) {
+            await runAutomaticForecastRefresh()
         }
         .onReceive(locationManager.$currentLocation.compactMap { $0 }) { location in
             model.useDeviceLocation(location)
@@ -83,4 +91,26 @@ struct RootView: View {
         }
         return true
     }
+
+    private func runAutomaticForecastRefresh() async {
+        guard scenePhase == .active else { return }
+
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+
+            guard scenePhase == .active else { return }
+            if !requestDeviceLocationIfNeeded() {
+                model.refreshIfStale(lowPowerMode: isLowPowerModeEnabled)
+            }
+        }
+    }
+}
+
+private struct AutomaticForecastRefreshContext: Equatable {
+    let isActive: Bool
+    let isLowPowerModeEnabled: Bool
 }
