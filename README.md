@@ -11,17 +11,17 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
     <td><img src="docs/screenshots/boulder-forecast.png" alt="Drash forecast for Boulder, Colorado" width="260"></td>
     <td><img src="docs/screenshots/boulder-precipitation.png" alt="Temperature and expected precipitation chart for Boulder, Colorado" width="260"></td>
     <td><img src="docs/screenshots/boulder-radar.png" alt="Observed NWS radar around Boulder, Colorado" width="260"></td>
-    <td><img src="docs/screenshots/my-location.png" alt="My Location in Drash saved places" width="260"></td>
+    <td><img src="docs/screenshots/widget.png" alt="Drash weather widget on the iPhone Home Screen" width="260"></td>
   </tr>
   <tr>
     <td align="center">Forecast</td>
     <td align="center">Temperature &amp; precipitation</td>
     <td align="center">Observed NWS radar</td>
-    <td align="center">My Location</td>
+    <td align="center">Home Screen widget</td>
   </tr>
 </table>
 
-## Included in 0.0.5
+## Included in 0.0.6
 
 - A shared HRRR/NWS source setting for current conditions and the expandable next-24-hours card
 - Per-place daily switching between the seven-day NWS outlook and HRRR's shorter horizon
@@ -32,6 +32,7 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
 - Fast offline search for Colorado 13ers, all 58 named Colorado 14ers, and continental-U.S. climbing areas, with manual catalog refresh
 - Summit forecasts corrected to each peak's elevation
 - Fahrenheit and Celsius, accessible labels, battery-conscious refreshes, and no accounts, ads, analytics, or third-party tracking
+- Home Screen and Lock Screen widgets for current temperature and next-hour rain chance
 
 ## Install it on your iPhone
 
@@ -73,7 +74,6 @@ NWS point forecasts cover the United States and its territories. The Radar tab d
 ## Logical next releases
 
 - Weather alert push notifications (requires an app server or carefully scheduled background refresh)
-- Home Screen and Lock Screen widgets
 - Storm-cell movement tracking
 - Apple Watch companion
 - NWS climate, river, air-quality, fire-weather, hurricane, and snow products
@@ -89,6 +89,6 @@ NWS point forecasts cover the United States and its territories. The Radar tab d
 - `Drash/SupportingFiles`: weather presentation helpers
 - `DrashUITests`: end-to-end simulator regression tests
 
-Every non-bot push to `main` runs `.github/workflows/refresh-outdoor-catalog.yml`, which rebuilds and commits `Drash/Resources/outdoor-places.sqlite`. To refresh it locally, run `python3 Tools/build_outdoor_catalog.py` and commit the generated database. The builder downloads the OpenBeta and GNIS sources, normalizes the searchable names, verifies SQLite integrity, and atomically replaces the seed file. Installed apps download that same file when the user taps **Refresh outdoor places** and reject damaged, incompatible, empty, oversized, or older databases before replacing their working copy.
+The outdoor catalog is generated locally instead of in GitHub Actions. Enable the repository's pre-push hook once with `git config core.hooksPath .githooks`. Before every push, the hook runs `python3 Tools/build_outdoor_catalog.py --refresh` and stops if `Drash/Resources/outdoor-places.sqlite` needs to be committed. The builder downloads fresh OpenBeta and GNIS sources, normalizes the searchable names, verifies SQLite integrity, and atomically replaces the seed file only when its contents changed. Installed apps download that same file when the user taps **Refresh outdoor places** and reject damaged, incompatible, empty, oversized, or older databases before replacing their working copy.
 
 Requires iOS 18 or newer.

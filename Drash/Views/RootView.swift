@@ -84,12 +84,7 @@ struct RootView: View {
     @discardableResult
     private func requestDeviceLocationIfNeeded() -> Bool {
         guard model.shouldRequestDeviceLocation(lowPowerMode: isLowPowerModeEnabled) else { return false }
-        model.beginUsingDeviceLocation()
-        guard locationManager.requestLocation() else {
-            model.cancelUsingDeviceLocation()
-            return false
-        }
-        return true
+        return locationManager.requestLocation()
     }
 
     private func runAutomaticForecastRefresh() async {

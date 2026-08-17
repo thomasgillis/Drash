@@ -1,0 +1,16 @@
+#!/bin/sh
+
+set -eu
+
+repository_root=$(git rev-parse --show-toplevel)
+catalog_path="Drash/Resources/outdoor-places.sqlite"
+
+echo "Refreshing the outdoor SQLite catalog before push..."
+python3 "$repository_root/Tools/build_outdoor_catalog.py" --refresh
+
+if ! git -C "$repository_root" diff --quiet HEAD -- "$catalog_path"; then
+    echo >&2
+    echo "Push stopped: $catalog_path changed after refreshing its sources." >&2
+    echo "Review and commit the generated database, then push again." >&2
+    exit 1
+fi

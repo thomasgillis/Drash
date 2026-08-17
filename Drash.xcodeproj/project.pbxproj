@@ -28,6 +28,10 @@
 		100000000000000000000013 /* Models/SummitCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000016 /* Models/SummitCatalog.swift */; };
 		100000000000000000000014 /* Services/OutdoorCatalogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000017 /* Services/OutdoorCatalogStore.swift */; };
 		100000000000000000000015 /* outdoor-places.sqlite in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* outdoor-places.sqlite */; };
+		100000000000000000000016 /* WidgetWeatherData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* WidgetWeatherData.swift */; };
+		100000000000000000000017 /* DrashWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* DrashWidget.swift */; };
+		100000000000000000000018 /* WidgetWeatherData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* WidgetWeatherData.swift */; };
+		100000000000000000000019 /* DrashWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001E /* DrashWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,7 +42,28 @@
 			remoteGlobalIDString = 500000000000000000000001;
 			remoteInfo = Drash;
 		};
+		900000000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 700000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000003;
+			remoteInfo = DrashWidget;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		300000000000000000000008 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				100000000000000000000019 /* DrashWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		200000000000000000000001 /* DrashApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrashApp.swift; sourceTree = "<group>"; };
@@ -65,6 +90,12 @@
 		200000000000000000000016 /* Models/SummitCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/SummitCatalog.swift; sourceTree = "<group>"; };
 		200000000000000000000017 /* Services/OutdoorCatalogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/OutdoorCatalogStore.swift; sourceTree = "<group>"; };
 		200000000000000000000018 /* outdoor-places.sqlite */ = {isa = PBXFileReference; lastKnownFileType = file; path = Resources/outdoor-places.sqlite; sourceTree = "<group>"; };
+		200000000000000000000019 /* WidgetWeatherData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetWeatherData.swift; sourceTree = "<group>"; };
+		20000000000000000000001A /* DrashWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrashWidget.swift; sourceTree = "<group>"; };
+		20000000000000000000001B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		20000000000000000000001C /* DrashWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DrashWidget.entitlements; sourceTree = "<group>"; };
+		20000000000000000000001D /* Drash.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Drash.entitlements; sourceTree = "<group>"; };
+		20000000000000000000001E /* DrashWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DrashWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,6 +113,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		300000000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -89,6 +127,8 @@
 			isa = PBXGroup;
 			children = (
 				400000000000000000000002 /* Drash */,
+				400000000000000000000005 /* Shared */,
+				400000000000000000000006 /* DrashWidget */,
 				400000000000000000000004 /* DrashUITests */,
 				400000000000000000000003 /* Products */,
 			);
@@ -118,6 +158,7 @@
 				200000000000000000000014 /* Assets.xcassets */,
 				200000000000000000000018 /* outdoor-places.sqlite */,
 				200000000000000000000010 /* Info.plist */,
+				20000000000000000000001D /* Drash.entitlements */,
 			);
 			path = Drash;
 			sourceTree = "<group>";
@@ -127,6 +168,7 @@
 			children = (
 				200000000000000000000011 /* Drash.app */,
 				200000000000000000000013 /* DrashUITests.xctest */,
+				20000000000000000000001E /* DrashWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -139,6 +181,24 @@
 			path = DrashUITests;
 			sourceTree = "<group>";
 		};
+		400000000000000000000005 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000019 /* WidgetWeatherData.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		400000000000000000000006 /* DrashWidget */ = {
+			isa = PBXGroup;
+			children = (
+				20000000000000000000001A /* DrashWidget.swift */,
+				20000000000000000000001B /* Info.plist */,
+				20000000000000000000001C /* DrashWidget.entitlements */,
+			);
+			path = DrashWidget;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -149,10 +209,12 @@
 				300000000000000000000003 /* Sources */,
 				300000000000000000000001 /* Frameworks */,
 				300000000000000000000002 /* Resources */,
+				300000000000000000000008 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A00000000000000000000002 /* PBXTargetDependency */,
 			);
 			name = Drash;
 			productName = Drash;
@@ -177,6 +239,23 @@
 			productReference = 200000000000000000000013 /* DrashUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		500000000000000000000003 /* DrashWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 600000000000000000000004 /* Build configuration list for PBXNativeTarget "DrashWidget" */;
+			buildPhases = (
+				30000000000000000000000A /* Sources */,
+				300000000000000000000007 /* Frameworks */,
+				300000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DrashWidget;
+			productName = DrashWidget;
+			productReference = 20000000000000000000001E /* DrashWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -189,10 +268,23 @@
 				TargetAttributes = {
 					500000000000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 					500000000000000000000002 = {
 						CreatedOnToolsVersion = 26.0;
 						TestTargetID = 500000000000000000000001;
+					};
+					500000000000000000000003 = {
+						CreatedOnToolsVersion = 16.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 				};
 			};
@@ -211,6 +303,7 @@
 			targets = (
 				500000000000000000000001 /* Drash */,
 				500000000000000000000002 /* DrashUITests */,
+				500000000000000000000003 /* DrashWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -226,6 +319,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		300000000000000000000005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		300000000000000000000009 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -257,6 +357,7 @@
 				10000000000000000000000D /* Views/RadarView.swift in Sources */,
 				10000000000000000000000E /* Views/AlertDetailView.swift in Sources */,
 				10000000000000000000000F /* Views/SettingsView.swift in Sources */,
+				100000000000000000000016 /* WidgetWeatherData.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -268,6 +369,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		30000000000000000000000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000017 /* DrashWidget.swift in Sources */,
+				100000000000000000000018 /* WidgetWeatherData.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -275,6 +385,11 @@
 			isa = PBXTargetDependency;
 			target = 500000000000000000000001 /* Drash */;
 			targetProxy = 900000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		A00000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 500000000000000000000003 /* DrashWidget */;
+			targetProxy = 900000000000000000000002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -319,6 +434,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Drash/Drash.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 99C9Y27595;
@@ -328,7 +444,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.5;
+				MARKETING_VERSION = 0.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -343,6 +459,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Drash/Drash.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 99C9Y27595;
@@ -352,7 +469,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.0.5;
+				MARKETING_VERSION = 0.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -370,7 +487,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 0.0.5;
+				MARKETING_VERSION = 0.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.DrashUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -387,13 +504,67 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 0.0.5;
+				MARKETING_VERSION = 0.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.DrashUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = Drash;
+			};
+			name = Release;
+		};
+		800000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DrashWidget/DrashWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 99C9Y27595;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DrashWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		800000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DrashWidget/DrashWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 99C9Y27595;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DrashWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tgillis.Drash.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -423,6 +594,15 @@
 			buildConfigurations = (
 				800000000000000000000005 /* Debug */,
 				800000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		600000000000000000000004 /* Build configuration list for PBXNativeTarget "DrashWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				800000000000000000000007 /* Debug */,
+				800000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

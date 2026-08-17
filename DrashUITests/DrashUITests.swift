@@ -142,37 +142,31 @@ final class DrashUITests: XCTestCase {
 
         app.tabBars.buttons["Radar"].tap()
         XCTAssertTrue(app.maps.firstMatch.waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["LIVE NWS RADAR"].exists)
-        XCTAssertTrue(app.staticTexts["Precipitation"].exists)
+        let radarSourceSwitcher = app.buttons["radar-source-switcher"]
+        XCTAssertTrue(radarSourceSwitcher.waitForExistence(timeout: 5))
+        XCTAssertEqual(radarSourceSwitcher.value as? String, "NWS")
         XCTAssertTrue(app.buttons["Center radar on GPS location"].exists)
         XCTAssertTrue(app.buttons["Refresh radar"].exists)
         XCTAssertTrue(app.buttons["Radar options"].exists)
         XCTAssertFalse(app.sliders["Radar opacity"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["precipitation-intensity-legend"].exists)
 
-        let loading = app.activityIndicators["Checking NWS radar"]
-        _ = loading.waitForExistence(timeout: 2)
-        XCTAssertTrue(loading.waitForNonExistence(timeout: 30), "The NWS radar service check did not finish")
+        XCTAssertTrue(app.sliders["Radar time"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Radar connection unavailable"].exists)
-        XCTAssertTrue(app.buttons["NWS"].isSelected)
-        XCTAssertTrue(app.staticTexts["OBSERVED"].exists)
-        XCTAssertTrue(app.sliders["Radar time"].waitForExistence(timeout: 5))
+        XCTAssertEqual(radarSourceSwitcher.value as? String, "NWS")
         XCTAssertTrue(app.staticTexts["Latest"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Play radar"].exists)
         XCTAssertTrue(app.buttons["Previous radar frame"].exists)
         app.buttons["Previous radar frame"].tap()
         XCTAssertTrue(app.buttons["Next radar frame"].isEnabled)
 
+        radarSourceSwitcher.tap()
         app.buttons["HRRR"].tap()
-        let hrrrLoading = app.activityIndicators["Checking HRRR radar"]
-        _ = hrrrLoading.waitForExistence(timeout: 2)
-        XCTAssertTrue(hrrrLoading.waitForNonExistence(timeout: 30))
-        XCTAssertTrue(app.sliders["Radar time"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["HRRR FORECAST"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["+18 hours"].exists)
+        XCTAssertTrue(app.staticTexts["+18 hours"].waitForExistence(timeout: 30))
 
+        radarSourceSwitcher.tap()
         app.buttons["NWS"].tap()
-        XCTAssertTrue(app.staticTexts["LIVE NWS RADAR"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Past 2 hours"].waitForExistence(timeout: 30))
 
         app.buttons["Radar options"].tap()
         XCTAssertTrue(app.buttons["Adjust radar opacity"].waitForExistence(timeout: 3))
@@ -312,34 +306,27 @@ final class DrashUITests: XCTestCase {
         radarTab.tap()
 
         XCTAssertTrue(app.maps.firstMatch.waitForExistence(timeout: 15))
-        let loading = app.activityIndicators["Checking NWS radar"]
-        _ = loading.waitForExistence(timeout: 2)
-        XCTAssertTrue(loading.waitForNonExistence(timeout: 30))
+        let timeline = app.sliders["Radar time"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Radar connection unavailable"].exists)
 
-        let timeline = app.sliders["Radar time"]
-        XCTAssertTrue(timeline.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["NWS"].isSelected)
+        let radarSourceSwitcher = app.buttons["radar-source-switcher"]
+        XCTAssertTrue(radarSourceSwitcher.exists)
+        XCTAssertEqual(radarSourceSwitcher.value as? String, "NWS")
         XCTAssertTrue(app.staticTexts["Past 2 hours"].exists)
         XCTAssertTrue(app.staticTexts["Latest"].exists)
-        XCTAssertTrue(app.staticTexts["OBSERVED"].exists)
         XCTAssertTrue(app.staticTexts["NOAA · National Weather Service"].exists)
-        XCTAssertTrue(app.staticTexts["Precipitation"].exists)
-        XCTAssertFalse(app.staticTexts["HRRR FORECAST"].exists)
         XCTAssertFalse(app.staticTexts["+1 hour"].exists)
 
+        radarSourceSwitcher.tap()
         app.buttons["HRRR"].tap()
-        let hrrrLoading = app.activityIndicators["Checking HRRR radar"]
-        _ = hrrrLoading.waitForExistence(timeout: 2)
-        XCTAssertTrue(hrrrLoading.waitForNonExistence(timeout: 30))
-        XCTAssertTrue(app.buttons["HRRR"].isSelected)
-        XCTAssertTrue(app.staticTexts["HRRR FORECAST RADAR"].exists)
-        XCTAssertTrue(app.staticTexts["HRRR FORECAST"].exists)
-        XCTAssertTrue(app.staticTexts["+18 hours"].exists)
+        XCTAssertTrue(app.staticTexts["+18 hours"].waitForExistence(timeout: 30))
+        XCTAssertEqual(radarSourceSwitcher.value as? String, "HRRR")
         XCTAssertTrue(app.staticTexts["NOAA HRRR · Iowa State IEM"].exists)
 
+        radarSourceSwitcher.tap()
         app.buttons["NWS"].tap()
-        XCTAssertTrue(app.staticTexts["OBSERVED"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["Past 2 hours"].waitForExistence(timeout: 30))
 
         let previousFrame = app.buttons["Previous radar frame"]
         let nextFrame = app.buttons["Next radar frame"]
@@ -398,7 +385,7 @@ final class DrashUITests: XCTestCase {
         _ = frameLoading.waitForExistence(timeout: 2)
         XCTAssertTrue(frameLoading.waitForNonExistence(timeout: 20))
         XCTAssertFalse(app.staticTexts["Pause or release to load frame"].exists)
-        XCTAssertTrue(app.staticTexts["OBSERVED"].waitForExistence(timeout: 5))
+        XCTAssertEqual(radarSourceSwitcher.value as? String, "NWS")
 
         let historyScreenshot = XCTAttachment(screenshot: app.screenshot())
         historyScreenshot.name = "Observed NWS radar history"
@@ -603,11 +590,6 @@ final class DrashUITests: XCTestCase {
         tabBar.buttons["Places"].tap()
         XCTAssertTrue(app.buttons["My Location"].waitForExistence(timeout: 5))
 
-        let myLocationScreenshot = XCTAttachment(screenshot: app.screenshot())
-        myLocationScreenshot.name = "README My Location place"
-        myLocationScreenshot.lifetime = .keepAlways
-        add(myLocationScreenshot)
-
         let search = app.searchFields["City, crag, summit, or ZIP code"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
@@ -655,9 +637,7 @@ final class DrashUITests: XCTestCase {
 
         tabBar.buttons["Radar"].tap()
         XCTAssertTrue(app.maps.firstMatch.waitForExistence(timeout: 15))
-        let loading = app.activityIndicators["Checking NWS radar"]
-        _ = loading.waitForExistence(timeout: 2)
-        XCTAssertTrue(loading.waitForNonExistence(timeout: 30))
+        XCTAssertTrue(app.sliders["Radar time"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.sliders["Radar opacity"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["precipitation-intensity-legend"].exists)
 

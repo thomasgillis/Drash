@@ -14,6 +14,7 @@ struct RadarView: View {
     @State private var mapStyle = RadarMapStyle.standard
     @State private var refreshToken = 0
     @State private var recenterToken = 0
+    @State private var gpsRecenterCoordinate: CLLocationCoordinate2D?
     @State private var isAwaitingGPSRecenter = false
     @State private var showsOpacityControl = false
     @State private var showsPrecipitationLegend = false
@@ -30,6 +31,7 @@ struct RadarView: View {
     @State private var lastRadarRequestToken = -1
     @State private var lastRadarRequestSource: RadarSource?
     @State private var isLowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
+    @State private var overlayGeometry = RadarOverlayGeometry()
 
     private let fullRadarURL = URL(string: "https://radar.weather.gov/")!
 
@@ -49,6 +51,7 @@ struct RadarView: View {
                     mapStyle: mapStyle,
                     refreshToken: refreshToken,
                     recenterToken: recenterToken,
+                    gpsRecenterCoordinate: gpsRecenterCoordinate,
                     radarSource: radarSource,
                     frame: renderedRadarFrame,
                     prefetchFrames: nearbyRadarFrames,
@@ -63,6 +66,16 @@ struct RadarView: View {
 
             VStack(spacing: 12) {
                 statusCard
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: RadarOverlayGeometryPreferenceKey.self,
+                                value: RadarOverlayGeometry(
+                                    statusFrame: proxy.frame(in: .named(RadarMapCoordinateSpace.name))
+                                )
+                            )
+                        }
+                    }
 
                 if let radarError {
                     errorBanner(radarError)
@@ -70,11 +83,33 @@ struct RadarView: View {
 
                 Spacer()
                 controlsCard
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: RadarOverlayGeometryPreferenceKey.self,
+                                value: RadarOverlayGeometry(
+                                    controlsFrame: proxy.frame(in: .named(RadarMapCoordinateSpace.name))
+                                )
+                            )
+                        }
+                    }
             }
             .padding(.horizontal, 14)
             .padding(.top, 12)
             // Leave MapKit's attribution visible at the bottom edge of the map.
             .padding(.bottom, 40)
+        }
+        .coordinateSpace(name: RadarMapCoordinateSpace.name)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: RadarOverlayGeometryPreferenceKey.self,
+                    value: RadarOverlayGeometry(mapSize: proxy.size)
+                )
+            }
+        }
+        .onPreferenceChange(RadarOverlayGeometryPreferenceKey.self) { geometry in
+            overlayGeometry = geometry
         }
         .navigationTitle("Radar")
         .navigationBarTitleDisplayMode(.inline)
@@ -132,10 +167,10 @@ struct RadarView: View {
                 isPlaying = false
             }
         }
-        .onReceive(locationManager.$currentLocation.compactMap { $0 }) { _ in
+        .onReceive(locationManager.$currentLocation.compactMap { $0 }) { location in
             guard isAwaitingGPSRecenter else { return }
             isAwaitingGPSRecenter = false
-            recenterToken += 1
+            recenterRadar(on: location)
         }
     }
 
@@ -150,94 +185,108 @@ struct RadarView: View {
     }
 
     private var radarMapVisibleContentInsets: UIEdgeInsets {
-        var bottom: CGFloat = 372
-        if showsPrecipitationLegend {
-            bottom += 48
+        guard let mapSize = overlayGeometry.mapSize,
+              let statusFrame = overlayGeometry.statusFrame,
+              let controlsFrame = overlayGeometry.controlsFrame,
+              mapSize.height > 0,
+              statusFrame.maxY < controlsFrame.minY else {
+            return UIEdgeInsets(top: 80, left: 12, bottom: 372, right: 12)
         }
-        if showsOpacityControl {
-            bottom += 56
-        }
-        return UIEdgeInsets(top: 80, left: 12, bottom: bottom, right: 12)
+
+        let clearance: CGFloat = 12
+        return UIEdgeInsets(
+            top: statusFrame.maxY + clearance,
+            left: 12,
+            bottom: mapSize.height - controlsFrame.minY + clearance,
+            right: 12
+        )
     }
 
     private var statusCard: some View {
-        HStack(spacing: 11) {
-            Circle()
-                .fill(radarSource.statusColor)
-                .frame(width: 10, height: 10)
-                .shadow(color: radarSource.statusColor.opacity(0.8), radius: 5)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(radarSource.statusTitle)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(radarSource.statusColor)
-                Text(radarLocation.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            if isCheckingRadar {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel(radarSource.checkingLabel)
-            } else if let checkedAt {
-                Label(
-                    checkedAt.formatted(date: .omitted, time: .shortened),
-                    systemImage: "checkmark.circle.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(.regularMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-    }
-
-    private var controlsCard: some View {
-        VStack(spacing: 12) {
+        Menu {
             Picker("Radar source", selection: $radarSource) {
                 ForEach(RadarSource.allCases) { source in
                     Text(source.shortName).tag(source)
                 }
             }
-            .pickerStyle(.segmented)
+        } label: {
+            HStack(spacing: 11) {
+                Circle()
+                    .fill(radarSource.statusColor)
+                    .frame(width: 10, height: 10)
+                    .shadow(color: radarSource.statusColor.opacity(0.8), radius: 5)
 
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Precipitation")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(radarSource.statusTitle)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(radarSource.statusColor)
+                    Text(radarLocation.displayName)
+                        .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text(frameDescription)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Button {
-                    centerRadarOnGPS()
-                } label: {
-                    Image(systemName: "location.fill")
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Center radar on GPS location")
+                VStack(alignment: .trailing, spacing: 4) {
+                    if isCheckingRadar {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(radarSource.checkingLabel)
+                    } else if let renderedRadarFrame {
+                        Label(
+                            renderedRadarFrame.validTime.formatted(
+                                date: .omitted,
+                                time: .shortened
+                            ),
+                            systemImage: "clock"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(
+                            radarSource == .hrrr
+                                ? "Forecast valid \(renderedRadarFrame.validTime.formatted(date: .omitted, time: .shortened))"
+                                : "Radar image time \(renderedRadarFrame.validTime.formatted(date: .omitted, time: .shortened))"
+                        )
+                    }
 
-                Button {
-                    refreshToken += 1
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 36, height: 36)
+                    HStack(spacing: 4) {
+                        Text("Source")
+                        Image(systemName: "chevron.down")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(.thinMaterial, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(.secondary.opacity(0.35), lineWidth: 0.5)
+                    }
+                    .accessibilityHidden(true)
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Refresh radar")
+                .layoutPriority(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+        .accessibilityIdentifier("radar-source-switcher")
+        .accessibilityLabel("Radar source")
+        .accessibilityValue(radarSource.shortName)
+        .accessibilityHint("Choose NWS or HRRR radar")
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    private var controlsCard: some View {
+        VStack(spacing: 8) {
+            if radarFrames.isEmpty {
+                HStack {
+                    Spacer()
+                    radarUtilityButtons
+                }
             }
 
             if showsPrecipitationLegend {
@@ -276,10 +325,31 @@ struct RadarView: View {
                 Spacer()
             }
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.16), radius: 16, y: 6)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    private var radarUtilityButtons: some View {
+        HStack(spacing: 8) {
+            Button {
+                centerRadarOnGPS()
+            } label: {
+                Image(systemName: "location.fill")
+                    .frame(width: 24, height: 28)
+            }
+            .accessibilityLabel("Center radar on GPS location")
+
+            Button {
+                refreshToken += 1
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .frame(width: 24, height: 28)
+            }
+            .accessibilityLabel("Refresh radar")
+        }
+        .buttonStyle(.borderless)
     }
 
     private var precipitationLegend: some View {
@@ -308,12 +378,8 @@ struct RadarView: View {
     }
 
     private var radarTimeline: some View {
-        VStack(spacing: 7) {
-            HStack(spacing: 10) {
-                Text(radarSource.timelineTitle)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.blue)
-
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
                 Text(selectedRadarFrame?.validTime.formatted(date: .omitted, time: .shortened) ?? "—")
                     .font(.caption.monospacedDigit().weight(.semibold))
 
@@ -352,6 +418,8 @@ struct RadarView: View {
                 }
                 .disabled(selectedFrameIndex >= radarFrames.count - 1)
                 .accessibilityLabel("Next radar frame")
+
+                radarUtilityButtons
             }
             .buttonStyle(.borderless)
 
@@ -375,7 +443,7 @@ struct RadarView: View {
                 }
             )
             .tint(.blue)
-            .frame(minHeight: 44)
+            .frame(height: 32)
             .accessibilityLabel("Radar time")
             .accessibilityValue(radarAccessibilityValue)
             .accessibilityHint("Swipe up or down to move through radar frames")
@@ -420,12 +488,17 @@ struct RadarView: View {
 
     private func centerRadarOnGPS() {
         isAwaitingGPSRecenter = true
-        if locationManager.currentLocation != nil {
-            recenterToken += 1
+        if let currentLocation = locationManager.currentLocation {
+            recenterRadar(on: currentLocation)
         }
         if !locationManager.requestLocation() {
             isAwaitingGPSRecenter = false
         }
+    }
+
+    private func recenterRadar(on location: CLLocation) {
+        gpsRecenterCoordinate = location.coordinate
+        recenterToken += 1
     }
 
     @ToolbarContentBuilder
@@ -619,24 +692,6 @@ struct RadarView: View {
         min(max(index, 0), max(radarFrames.count - 1, 0))
     }
 
-    private var latestObservedIndex: Int {
-        max(radarFrames.count - 1, 0)
-    }
-
-    private var frameDescription: String {
-        guard let frame = selectedRadarFrame else { return "Latest mosaic" }
-        switch radarSource {
-        case .hrrr:
-            if frame.forecastMinute == 0 { return "Model analysis" }
-            return "Simulated reflectivity · +\((frame.forecastMinute ?? 0) / 60)h \((frame.forecastMinute ?? 0) % 60)m"
-        case .nws:
-            if selectedFrameIndex == latestObservedIndex {
-                return "Latest observed mosaic"
-            }
-            return "Observed at \(frame.validTime.formatted(date: .omitted, time: .shortened))"
-        }
-    }
-
     private var radarAccessibilityValue: String {
         guard let frame = selectedRadarFrame else { return "Latest" }
         switch radarSource {
@@ -729,6 +784,33 @@ struct RadarView: View {
 
 }
 
+private enum RadarMapCoordinateSpace {
+    static let name = "RadarMap"
+}
+
+private struct RadarOverlayGeometry: Equatable {
+    var mapSize: CGSize?
+    var statusFrame: CGRect?
+    var controlsFrame: CGRect?
+
+    mutating func merge(_ other: RadarOverlayGeometry) {
+        mapSize = other.mapSize ?? mapSize
+        statusFrame = other.statusFrame ?? statusFrame
+        controlsFrame = other.controlsFrame ?? controlsFrame
+    }
+}
+
+private struct RadarOverlayGeometryPreferenceKey: PreferenceKey {
+    static let defaultValue = RadarOverlayGeometry()
+
+    static func reduce(
+        value: inout RadarOverlayGeometry,
+        nextValue: () -> RadarOverlayGeometry
+    ) {
+        value.merge(nextValue())
+    }
+}
+
 private struct RadarLoadRequest: Hashable {
     let isActive: Bool
     let refreshToken: Int
@@ -809,6 +891,7 @@ private struct NativeRadarMap: UIViewRepresentable {
     let mapStyle: RadarMapStyle
     let refreshToken: Int
     let recenterToken: Int
+    let gpsRecenterCoordinate: CLLocationCoordinate2D?
     let radarSource: RadarSource
     let frame: RadarFrame?
     let prefetchFrames: [RadarFrame]
@@ -912,10 +995,10 @@ private struct NativeRadarMap: UIViewRepresentable {
 
         if context.coordinator.lastRecenterToken != recenterToken {
             context.coordinator.lastRecenterToken = recenterToken
-            if let deviceLocation {
+            if let gpsRecenterCoordinate {
                 context.coordinator.hasCenteredOnDeviceLocation = true
                 context.coordinator.center(
-                    on: deviceLocation.coordinate,
+                    on: gpsRecenterCoordinate,
                     mapView: mapView,
                     animated: true
                 )
@@ -1168,31 +1251,69 @@ private struct NativeRadarMap: UIViewRepresentable {
         func center(
             on coordinate: CLLocationCoordinate2D,
             mapView: MKMapView,
-            animated: Bool
+            animated: Bool,
+            deferUntilLayout: Bool = true
         ) {
             let region = MKCoordinateRegion(
                 center: coordinate,
                 latitudinalMeters: NativeRadarMap.defaultRadarSpanMeters,
                 longitudinalMeters: NativeRadarMap.defaultRadarSpanMeters
             )
+            let visibleBounds = mapView.bounds.inset(by: visibleContentInsets)
+            guard mapView.bounds.width > 0,
+                  mapView.bounds.height > 0,
+                  visibleBounds.width > 0,
+                  visibleBounds.height > 0 else {
+                mapView.setRegion(region, animated: animated)
+                if deferUntilLayout {
+                    DispatchQueue.main.async { [weak self, weak mapView] in
+                        guard let self, let mapView else { return }
+                        self.center(
+                            on: coordinate,
+                            mapView: mapView,
+                            animated: animated,
+                            deferUntilLayout: false
+                        )
+                    }
+                }
+                return
+            }
+
+            let screenCenter = CGPoint(x: mapView.bounds.midX, y: mapView.bounds.midY)
+            let visibleCenter = CGPoint(x: visibleBounds.midX, y: visibleBounds.midY)
+            let fittedMapRect = mapView.mapRectThatFits(mapRect(for: region))
+            let targetPoint = MKMapPoint(coordinate)
+            let horizontalOffset = (visibleCenter.x - screenCenter.x)
+                / mapView.bounds.width * fittedMapRect.width
+            let verticalOffset = (visibleCenter.y - screenCenter.y)
+                / mapView.bounds.height * fittedMapRect.height
+            let cameraCenter = MKMapPoint(
+                x: targetPoint.x - horizontalOffset,
+                y: targetPoint.y - verticalOffset
+            )
+            let adjustedMapRect = MKMapRect(
+                x: cameraCenter.x - fittedMapRect.width / 2,
+                y: cameraCenter.y - fittedMapRect.height / 2,
+                width: fittedMapRect.width,
+                height: fittedMapRect.height
+            )
+            mapView.setVisibleMapRect(adjustedMapRect, animated: animated)
+        }
+
+        private func mapRect(for region: MKCoordinateRegion) -> MKMapRect {
             let northWest = MKMapPoint(CLLocationCoordinate2D(
-                latitude: coordinate.latitude + region.span.latitudeDelta / 2,
-                longitude: coordinate.longitude - region.span.longitudeDelta / 2
+                latitude: region.center.latitude + region.span.latitudeDelta / 2,
+                longitude: region.center.longitude - region.span.longitudeDelta / 2
             ))
             let southEast = MKMapPoint(CLLocationCoordinate2D(
-                latitude: coordinate.latitude - region.span.latitudeDelta / 2,
-                longitude: coordinate.longitude + region.span.longitudeDelta / 2
+                latitude: region.center.latitude - region.span.latitudeDelta / 2,
+                longitude: region.center.longitude + region.span.longitudeDelta / 2
             ))
-            let mapRect = MKMapRect(
+            return MKMapRect(
                 x: min(northWest.x, southEast.x),
                 y: min(northWest.y, southEast.y),
                 width: abs(southEast.x - northWest.x),
                 height: abs(southEast.y - northWest.y)
-            )
-            mapView.setVisibleMapRect(
-                mapRect,
-                edgePadding: visibleContentInsets,
-                animated: animated
             )
         }
 

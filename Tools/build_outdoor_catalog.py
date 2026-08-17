@@ -7,6 +7,7 @@ import argparse
 import concurrent.futures
 import csv
 import datetime as dt
+import functools
 import json
 import os
 import pathlib
@@ -88,10 +89,10 @@ def openbeta_states() -> list[dict]:
     return [child for child in children if child["area_name"] in STATE_CODES]
 
 
-def fetch_state_crags(state: dict) -> list[dict]:
+def fetch_state_crags(state: dict, *, use_cache: bool = True) -> list[dict]:
     STATE_CACHE.mkdir(parents=True, exist_ok=True)
     cache_path = STATE_CACHE / f"{STATE_CODES[state['area_name']]}.json"
-    if cache_path.exists():
+    if use_cache and cache_path.exists():
         return json.loads(cache_path.read_text())
 
     query = """
@@ -181,6 +182,54 @@ def normalize(value: str) -> str:
     return "".join(character for character in decomposed if not unicodedata.combining(character)).casefold()
 
 
+def database_matches(entries: list[dict]) -> bool:
+    """Return whether the existing database already contains the source entries."""
+    if not OUTPUT.exists():
+        return False
+
+    expected_rows = sorted(
+        (
+            entry["id"],
+            entry["name"],
+            entry["state"],
+            entry["latitude"],
+            entry["longitude"],
+            entry["kind"],
+            entry.get("elevationFeet"),
+            normalize(entry["name"]),
+        )
+        for entry in entries
+    )
+
+    try:
+        connection = sqlite3.connect(f"file:{OUTPUT}?mode=ro", uri=True)
+        try:
+            application_id = connection.execute("PRAGMA application_id").fetchone()[0]
+            schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            metadata = dict(connection.execute("SELECT key, value FROM metadata"))
+            existing_rows = connection.execute(
+                """
+                SELECT id, name, state, latitude, longitude, kind,
+                       elevation_feet, normalized_name
+                FROM entries
+                ORDER BY id
+                """
+            ).fetchall()
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error, TypeError):
+        return False
+
+    return (
+        application_id == APPLICATION_ID
+        and schema_version == SCHEMA_VERSION
+        and metadata.get("catalog_version") == str(CATALOG_VERSION)
+        and metadata.get("schema_version") == str(SCHEMA_VERSION)
+        and metadata.get("entry_count") == str(len(entries))
+        and existing_rows == expected_rows
+    )
+
+
 def write_database(entries: list[dict], generated_at: str) -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     temporary_output = OUTPUT.with_suffix(".sqlite.tmp")
@@ -264,6 +313,11 @@ def main() -> None:
         type=pathlib.Path,
         help="Convert an existing version-1 JSON catalog without downloading source data.",
     )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Ignore cached OpenBeta data and fetch every source again.",
+    )
     arguments = parser.parse_args()
 
     if arguments.from_json:
@@ -273,20 +327,24 @@ def main() -> None:
         write_database(catalog["entries"], catalog["generatedAt"])
         return
 
-    if CRAG_CACHE.exists():
+    if CRAG_CACHE.exists() and not arguments.refresh:
         crags = json.loads(CRAG_CACHE.read_text())
         print(f"Reusing {len(crags)} cached climbing areas")
     else:
         states = openbeta_states()
         crags: list[dict] = []
+        fetch_crags = functools.partial(fetch_state_crags, use_cache=not arguments.refresh)
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            for entries in executor.map(fetch_state_crags, states):
+            for entries in executor.map(fetch_crags, states):
                 crags.extend(entries)
         CRAG_CACHE.write_text(json.dumps(crags, ensure_ascii=False, separators=(",", ":")))
 
     thirteeners = fetch_thirteeners()
     entries = crags + thirteeners
     entries.sort(key=lambda item: (item["kind"], item["name"].casefold(), item["state"], item["id"]))
+    if database_matches(entries):
+        print("Outdoor catalog source data is unchanged; keeping the existing database.")
+        return
     generated_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     write_database(entries, generated_at)
 

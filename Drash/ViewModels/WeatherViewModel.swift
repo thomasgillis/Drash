@@ -9,6 +9,9 @@ final class WeatherViewModel: ObservableObject {
     @Published var temperatureUnit: TemperatureUnit {
         didSet {
             UserDefaults.standard.set(temperatureUnit.rawValue, forKey: Keys.temperatureUnit)
+            WidgetWeatherData.setPreferredTemperatureUnit(
+                temperatureUnit == .fahrenheit ? "F" : "C"
+            )
             refresh()
         }
     }
@@ -36,6 +39,7 @@ final class WeatherViewModel: ObservableObject {
     private let client: WeatherClient
     private let store: SnapshotStore
     private var loadTask: Task<Void, Never>?
+    private var widgetLoadTask: Task<Void, Never>?
     private var loadingLocation: WeatherLocation?
     private var loadingUnit: TemperatureUnit?
     private var loadingHourlyModel: ForecastModel?
@@ -85,6 +89,9 @@ final class WeatherViewModel: ObservableObject {
         } else {
             selectedLocation = nil
         }
+        WidgetWeatherData.setPreferredTemperatureUnit(
+            temperatureUnit == .fahrenheit ? "F" : "C"
+        )
     }
 
     func restoreLastSession(lowPowerMode: Bool = false) async {
@@ -111,6 +118,9 @@ final class WeatherViewModel: ObservableObject {
                 lastSuccessfulFetchAt = cached.savedAt
                 restoredMatchingSnapshot = true
             }
+            if restoredMatchingSnapshot {
+                publishWidget(cachedSnapshot)
+            }
         }
 
         if let selectedLocation {
@@ -124,10 +134,6 @@ final class WeatherViewModel: ObservableObject {
     }
 
     func useDeviceLocation(_ location: CLLocation) {
-        guard isAwaitingDeviceLocation
-                || selectedLocation == nil
-                || selectedLocation?.isCurrentLocation == true else { return }
-        isAwaitingDeviceLocation = false
         lastDeviceLocationAt = .now
         let previous = selectedLocation?.isCurrentLocation == true
             ? selectedLocation
@@ -140,7 +146,14 @@ final class WeatherViewModel: ObservableObject {
             isCurrentLocation: true,
             forecastModel: previous?.forecastModel ?? .hrrr
         )
-        select(place)
+        if isAwaitingDeviceLocation
+            || selectedLocation == nil
+            || selectedLocation?.isCurrentLocation == true {
+            isAwaitingDeviceLocation = false
+            select(place)
+        } else {
+            refreshWidget(for: place)
+        }
     }
 
     func beginUsingDeviceLocation() {
@@ -153,8 +166,6 @@ final class WeatherViewModel: ObservableObject {
 
     func shouldRequestDeviceLocation(lowPowerMode: Bool = false) -> Bool {
         guard !isAwaitingDeviceLocation else { return false }
-        guard let selectedLocation else { return true }
-        guard selectedLocation.isCurrentLocation else { return false }
         guard let lastDeviceLocationAt else { return true }
         let freshnessInterval = lowPowerMode
             ? lowPowerDeviceLocationFreshnessInterval
@@ -212,7 +223,9 @@ final class WeatherViewModel: ObservableObject {
 
     func suspendNetworkWork() {
         loadTask?.cancel()
+        widgetLoadTask?.cancel()
         loadTask = nil
+        widgetLoadTask = nil
         loadingLocation = nil
         loadingUnit = nil
         loadingHourlyModel = nil
@@ -377,6 +390,62 @@ final class WeatherViewModel: ObservableObject {
         }) {
             favoriteLocations[index] = result.location
         }
+        publishWidget(result)
+    }
+
+    private func refreshWidget(for location: WeatherLocation) {
+        widgetLoadTask?.cancel()
+        let requestedUnit = temperatureUnit
+        let requestedHourlyModel = currentAndHourlyForecastModel
+        widgetLoadTask = Task {
+            do {
+                let result = try await client.weather(
+                    for: location,
+                    unit: requestedUnit,
+                    hourlyModel: requestedHourlyModel
+                ) { [weak self] coreForecast in
+                    await self?.publishWidget(coreForecast, unit: requestedUnit)
+                }
+                guard !Task.isCancelled else { return }
+                publishWidget(result, unit: requestedUnit)
+            } catch {
+                // Keep the last successful widget value when a background-style
+                // current-location refresh is unavailable.
+            }
+            widgetLoadTask = nil
+        }
+    }
+
+    private func publishWidget(_ result: WeatherSnapshot, unit: TemperatureUnit? = nil) {
+        guard result.location.isCurrentLocation else { return }
+        guard let currentHour = result.hourly.first else { return }
+        let widgetUnit = unit ?? temperatureUnit
+        let currentObservation = result.observationModel == result.effectiveHourlyForecastModel
+            ? result.observation
+            : nil
+        let currentTemperature: Int?
+        if result.effectiveHourlyForecastModel == .hrrr {
+            currentTemperature = result.hrrrCurrentTemperature?.temperature(in: widgetUnit)
+                ?? currentObservation?.temperature.temperature(in: widgetUnit)
+                ?? currentHour.temperature(in: widgetUnit)
+        } else {
+            currentTemperature = currentObservation?.temperature.temperature(in: widgetUnit)
+                ?? currentHour.temperature(in: widgetUnit)
+        }
+        guard let currentTemperature else { return }
+
+        WidgetWeatherData(
+            locationName: result.location.displayName,
+            temperature: currentTemperature,
+            temperatureUnit: widgetUnit == .fahrenheit ? "F" : "C",
+            rainChance: currentHour.precipitationChance,
+            summary: currentObservation?.displayDescription ?? currentHour.shortForecast,
+            symbolName: currentHour.symbolName,
+            isDaytime: currentHour.isDaytime,
+            updatedAt: result.updatedAt,
+            latitude: result.location.latitude,
+            longitude: result.location.longitude
+        ).save()
     }
 
     private func finishLoad(_ loadID: UUID, wasSuccessful: Bool) {
