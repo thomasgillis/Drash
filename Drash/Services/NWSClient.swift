@@ -26,7 +26,7 @@ enum WeatherServiceError: LocalizedError {
 struct NWSWeatherContext: Sendable {
     let location: WeatherLocation
     let forecastOffice: String?
-    let observation: Observation?
+    let observation: WeatherObservation?
     let station: ObservationStation?
     let alerts: [WeatherAlert]
     let alertsUnavailable: Bool
@@ -162,7 +162,7 @@ actor NWSClient {
 
         let point = try await pointResponse(at: pointURL, cacheKey: coordinates)
         async let alertResult: OptionalFetch<AlertsResponse> = optionalGet(alertsURL)
-        let stationAndObservation: (station: ObservationStation?, observation: Observation?)
+        let stationAndObservation: (station: ObservationStation?, observation: WeatherObservation?)
         if includeStationObservation {
             stationAndObservation = await fetchStationAndObservation(
                 from: point.properties.observationStations
@@ -204,7 +204,7 @@ actor NWSClient {
         }
     }
 
-    private func fetchStationAndObservation(from stationsURL: URL) async -> (station: ObservationStation?, observation: Observation?) {
+    private func fetchStationAndObservation(from stationsURL: URL) async -> (station: ObservationStation?, observation: WeatherObservation?) {
         do {
             let lookup = try await stationLookup(from: stationsURL)
             do {
@@ -276,11 +276,13 @@ actor NWSClient {
         let requestedAt = Date()
         try registerRequest(at: requestedAt)
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 20
+        )
         request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
         request.setValue("Drash/1.0 (personal iOS weather app)", forHTTPHeaderField: "User-Agent")
-        request.cachePolicy = .useProtocolCachePolicy
-        request.timeoutInterval = 20
 
         let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()

@@ -31,6 +31,7 @@
 		100000000000000000000017 /* DrashWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* DrashWidget.swift */; };
 		100000000000000000000018 /* WidgetWeatherData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* WidgetWeatherData.swift */; };
 		100000000000000000000019 /* DrashWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001E /* DrashWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		10000000000000000000001A /* Services/SavedPlacesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001F /* Services/SavedPlacesStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +95,8 @@
 		20000000000000000000001C /* DrashWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DrashWidget.entitlements; sourceTree = "<group>"; };
 		20000000000000000000001D /* Drash.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Drash.entitlements; sourceTree = "<group>"; };
 		20000000000000000000001E /* DrashWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DrashWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		20000000000000000000001F /* Services/SavedPlacesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SavedPlacesStore.swift; sourceTree = "<group>"; };
+		200000000000000000000020 /* DrashCloud.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DrashCloud.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -144,6 +147,7 @@
 				200000000000000000000005 /* Services/LocationManager.swift */,
 				200000000000000000000006 /* Services/PlaceSearchService.swift */,
 				200000000000000000000007 /* Services/SnapshotStore.swift */,
+				20000000000000000000001F /* Services/SavedPlacesStore.swift */,
 				200000000000000000000008 /* ViewModels/WeatherViewModel.swift */,
 				200000000000000000000009 /* SupportingFiles/WeatherPresentation.swift */,
 				20000000000000000000000A /* Views/RootView.swift */,
@@ -156,6 +160,7 @@
 				200000000000000000000018 /* outdoor-places.sqlite */,
 				200000000000000000000010 /* Info.plist */,
 				20000000000000000000001D /* Drash.entitlements */,
+				200000000000000000000020 /* DrashCloud.entitlements */,
 			);
 			path = Drash;
 			sourceTree = "<group>";
@@ -269,6 +274,12 @@
 							com.apple.ApplicationGroups.iOS = {
 								enabled = 1;
 							};
+							com.apple.BackgroundModes = {
+								enabled = 1;
+							};
+							com.apple.iCloud = {
+								enabled = 1;
+							};
 						};
 					};
 					500000000000000000000002 = {
@@ -345,6 +356,7 @@
 				100000000000000000000005 /* Services/LocationManager.swift in Sources */,
 				100000000000000000000006 /* Services/PlaceSearchService.swift in Sources */,
 				100000000000000000000007 /* Services/SnapshotStore.swift in Sources */,
+				10000000000000000000001A /* Services/SavedPlacesStore.swift in Sources */,
 				100000000000000000000008 /* ViewModels/WeatherViewModel.swift in Sources */,
 				100000000000000000000009 /* SupportingFiles/WeatherPresentation.swift in Sources */,
 				10000000000000000000000A /* Views/RootView.swift in Sources */,
@@ -447,7 +459,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -455,7 +467,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Drash/Drash.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Drash/DrashCloud.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 99C9Y27595;
@@ -470,9 +482,10 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = ICLOUD_SYNC_ENABLED;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -488,7 +501,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Drash;
 			};
 			name = Debug;
@@ -505,7 +518,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Drash;
 			};
 			name = Release;
@@ -533,7 +546,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -560,7 +573,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};

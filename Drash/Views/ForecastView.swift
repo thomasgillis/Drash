@@ -17,55 +17,23 @@ struct ForecastView: View {
                     .tint(ForecastPalette.blue)
                     .foregroundStyle(ForecastPalette.ink)
             } else if let snapshot = model.snapshot {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        LazyVStack(spacing: 16) {
-                            CurrentConditionsCard(snapshot: snapshot, unit: model.temperatureUnit)
+                GeometryReader { proxy in
+                    let usesWideLayout = proxy.size.width >= 900
 
-                            ForEach(snapshot.alerts) { alert in
-                                AlertBanner(alert: alert)
-                                    .onTapGesture { selectedAlert = alert }
-                            }
-                            if !snapshot.alertsAreAvailable {
-                                AlertAvailabilityBanner()
-                            }
-
-                            HourlyForecastCard(
-                                periods: Array(snapshot.hourly.prefix(24)),
-                                precipitationAmounts: snapshot.precipitationAmounts ?? [],
-                                unit: model.temperatureUnit,
-                                forecastModel: snapshot.effectiveHourlyForecastModel
-                            )
-                            DailyForecastCard(
-                                periods: snapshot.daily,
-                                hourlyPeriods: snapshot.hourly,
-                                precipitationAmounts: snapshot.precipitationAmounts ?? [],
-                                unit: model.temperatureUnit,
-                                forecastModel: snapshot.location.forecastModel,
-                                selectedForecastModel: model.selectedForecastModel,
-                                isLoading: model.isLoading,
-                                onSelectForecastModel: model.selectForecastModel
-                            )
-                            ConditionsGrid(
-                                snapshot: snapshot,
-                                unit: model.temperatureUnit,
-                                altitudeUnit: model.altitudeUnit
-                            )
-
-                            Text(forecastAttribution(for: snapshot))
-                                .font(.caption)
-                                .foregroundStyle(ForecastPalette.secondary)
-                                .padding(.vertical, 10)
-                        }
-                        .padding()
+                    ScrollView {
+                        forecastContent(snapshot, usesWideLayout: usesWideLayout)
+                            .frame(maxWidth: usesWideLayout ? 1_100 : 760)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, usesWideLayout ? 24 : 16)
+                            .padding(.vertical, 16)
                     }
-                }
-                .accessibilityIdentifier("forecast-scroll-view")
-                .refreshable {
-                    // Finish the native refresh transaction immediately so its
-                    // pulled-down offset is not preserved while networking runs.
-                    // The view model's loading indicator reports that work instead.
-                    model.refresh()
+                    .accessibilityIdentifier("forecast-scroll-view")
+                    .refreshable {
+                        // Finish the native refresh transaction immediately so its
+                        // pulled-down offset is not preserved while networking runs.
+                        // The view model's loading indicator reports that work instead.
+                        model.refresh()
+                    }
                 }
             } else if model.isLoading {
                 ProgressView(model.loadingDescription)
@@ -111,6 +79,83 @@ struct ForecastView: View {
             Button("OK", role: .cancel) { model.dismissError() }
         } message: {
             Text(model.errorMessage ?? "Unknown error")
+        }
+    }
+
+    @ViewBuilder
+    private func forecastContent(
+        _ snapshot: WeatherSnapshot,
+        usesWideLayout: Bool
+    ) -> some View {
+        LazyVStack(spacing: 16) {
+            if usesWideLayout {
+                HStack(alignment: .top, spacing: 16) {
+                    LazyVStack(spacing: 16) {
+                        currentConditions(snapshot)
+                        alertBanners(snapshot)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    ConditionsGrid(
+                        snapshot: snapshot,
+                        unit: model.temperatureUnit,
+                        altitudeUnit: model.altitudeUnit
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+            } else {
+                currentConditions(snapshot)
+                alertBanners(snapshot)
+            }
+
+            HourlyForecastCard(
+                periods: Array(snapshot.hourly.prefix(24)),
+                precipitationAmounts: snapshot.precipitationAmounts ?? [],
+                unit: model.temperatureUnit,
+                forecastModel: snapshot.effectiveHourlyForecastModel
+            )
+            DailyForecastCard(
+                periods: snapshot.daily,
+                hourlyPeriods: snapshot.hourly,
+                precipitationAmounts: snapshot.precipitationAmounts ?? [],
+                unit: model.temperatureUnit,
+                forecastModel: snapshot.location.forecastModel,
+                selectedForecastModel: model.selectedForecastModel,
+                isLoading: model.isLoading,
+                onSelectForecastModel: model.selectForecastModel
+            )
+
+            if !usesWideLayout {
+                ConditionsGrid(
+                    snapshot: snapshot,
+                    unit: model.temperatureUnit,
+                    altitudeUnit: model.altitudeUnit
+                )
+            }
+
+            Text(forecastAttribution(for: snapshot))
+                .font(.caption)
+                .foregroundStyle(ForecastPalette.secondary)
+                .padding(.vertical, 10)
+        }
+    }
+
+    private func currentConditions(_ snapshot: WeatherSnapshot) -> some View {
+        CurrentConditionsCard(
+            snapshot: snapshot,
+            unit: model.temperatureUnit,
+            didLastRefreshFail: model.didLastRefreshFail
+        )
+    }
+
+    @ViewBuilder
+    private func alertBanners(_ snapshot: WeatherSnapshot) -> some View {
+        ForEach(snapshot.alerts) { alert in
+            AlertBanner(alert: alert)
+                .onTapGesture { selectedAlert = alert }
+        }
+        if !snapshot.alertsAreAvailable {
+            AlertAvailabilityBanner()
         }
     }
 
@@ -187,8 +232,9 @@ private struct EmptyWeatherView: View {
 private struct CurrentConditionsCard: View {
     let snapshot: WeatherSnapshot
     let unit: TemperatureUnit
+    let didLastRefreshFail: Bool
 
-    private var currentObservation: Observation? {
+    private var currentObservation: WeatherObservation? {
         snapshot.observationModel == snapshot.effectiveHourlyForecastModel
             ? snapshot.observation
             : nil
@@ -244,7 +290,18 @@ private struct CurrentConditionsCard: View {
                     Spacer()
                     Label(currentWind ?? currentHour.windSpeed, systemImage: "wind")
                     Spacer()
-                    Text("Updated \(snapshot.updatedAt.relativeUpdateDescription)")
+                    HStack(spacing: 4) {
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            Text(
+                                "Updated \(snapshot.updatedAt.relativeUpdateDescription(relativeTo: context.date))"
+                            )
+                        }
+                        if didLastRefreshFail {
+                            Text("· Failed to update")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
+                    }
                 }
             }
             .font(.caption)

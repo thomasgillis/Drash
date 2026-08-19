@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Drash's compact offline crag and Colorado summit search catalog."""
+"""Build Drash's compact offline park, crag, and Colorado summit search catalog."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import concurrent.futures
 import csv
 import datetime as dt
 import functools
+import io
 import json
 import os
 import pathlib
@@ -15,7 +16,9 @@ import sqlite3
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
+import zipfile
 
 
 OPENBETA_URL = "https://api.openbeta.io"
@@ -23,14 +26,23 @@ GNIS_COLORADO_URL = (
     "https://prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/Archive/"
     "MainDomestic/CO_Features_20210825.txt"
 )
+GNIS_PARKS_URL = (
+    "https://prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/Archive/"
+    "MainDomestic/AllStates.zip"
+)
+PAD_US_STATE_PARKS_URL = (
+    "https://services.arcgis.com/v01gqwM5QqNysAAi/ArcGIS/rest/services/"
+    "Management_Areas/FeatureServer/0/query"
+)
 USA_UUID = "1db1e8ba-a40e-587c-88a4-64f5ea814b8e"
 OUTPUT = pathlib.Path(__file__).parents[1] / "Drash/Resources/outdoor-places.sqlite"
 FOURTEENERS = pathlib.Path(__file__).with_name("colorado_fourteeners.json")
 CRAG_CACHE = pathlib.Path("/private/tmp/drash-outdoor-crags.json")
+PARK_CACHE = pathlib.Path("/private/tmp/drash-outdoor-parks-v4.json")
 STATE_CACHE = pathlib.Path("/private/tmp/drash-outdoor-state-cache")
 USER_AGENT = "Drash catalog builder/1.0"
-CATALOG_VERSION = 2
-SCHEMA_VERSION = 2
+CATALOG_VERSION = 3
+SCHEMA_VERSION = 3
 APPLICATION_ID = 0x44524153  # "DRAS"
 
 STATE_CODES = {
@@ -49,12 +61,70 @@ STATE_CODES = {
     "Wyoming": "WY", "District of Columbia": "DC",
 }
 
+# The NPS recognizes 63 units with the National Park designation. Most use the
+# same name in the legacy GNIS park layer; these aliases cover renamed units.
+NATIONAL_PARK_NAMES = (
+    "Acadia National Park", "National Park of American Samoa", "Arches National Park",
+    "Badlands National Park", "Big Bend National Park", "Biscayne National Park",
+    "Black Canyon of the Gunnison National Park", "Bryce Canyon National Park",
+    "Canyonlands National Park", "Capitol Reef National Park",
+    "Carlsbad Caverns National Park", "Channel Islands National Park",
+    "Congaree National Park", "Crater Lake National Park", "Cuyahoga Valley National Park",
+    "Death Valley National Park", "Denali National Park", "Dry Tortugas National Park",
+    "Everglades National Park", "Gates of the Arctic National Park",
+    "Gateway Arch National Park", "Glacier Bay National Park", "Glacier National Park",
+    "Grand Canyon National Park", "Grand Teton National Park", "Great Basin National Park",
+    "Great Sand Dunes National Park", "Great Smoky Mountains National Park",
+    "Guadalupe Mountains National Park", "Haleakala National Park",
+    "Hawai'i Volcanoes National Park", "Hot Springs National Park",
+    "Indiana Dunes National Park", "Isle Royale National Park", "Joshua Tree National Park",
+    "Katmai National Park", "Kenai Fjords National Park", "Kings Canyon National Park",
+    "Kobuk Valley National Park", "Lake Clark National Park", "Lassen Volcanic National Park",
+    "Mammoth Cave National Park", "Mesa Verde National Park", "Mount Rainier National Park",
+    "New River Gorge National Park and Preserve", "North Cascades National Park",
+    "Olympic National Park", "Petrified Forest National Park", "Pinnacles National Park",
+    "Redwood National Park", "Rocky Mountain National Park", "Saguaro National Park",
+    "Sequoia National Park", "Shenandoah National Park", "Theodore Roosevelt National Park",
+    "Virgin Islands National Park", "Voyageurs National Park", "White Sands National Park",
+    "Wind Cave National Park", "Wrangell-St. Elias National Park",
+    "Yellowstone National Park", "Yosemite National Park", "Zion National Park",
+)
+NATIONAL_PARK_ALIASES = {
+    "Hawai'i Volcanoes National Park": "Hawaiʻi Volcanoes National Park",
+    "New River Gorge National Park and Preserve": "New River Gorge National River",
+    "Wrangell-St. Elias National Park": "Wrangell-Saint Elias National Park",
+}
+NATIONAL_PARK_OVERRIDES = {
+    # These units are omitted from the archived GNIS administrative layer.
+    "Denali National Park": ("AK", 63.3411089987, -150.7341705285),
+    "Gates of the Arctic National Park": ("AK", 67.7968076812, -153.3098087878),
+    "Lake Clark National Park": ("AK", 60.5471428260, -153.2486904234),
+    "Virgin Islands National Park": ("VI", 18.3425688734, -64.7452378784),
+}
+
 
 def request_json(request: urllib.request.Request, attempts: int = 8) -> dict:
     for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=90) as response:
                 return json.load(response)
+        except urllib.error.HTTPError as error:
+            if attempt + 1 == attempts:
+                raise
+            retry_after = int(error.headers.get("Retry-After", "0"))
+            time.sleep(max(retry_after, min(60, 5 * (attempt + 1))))
+        except Exception:
+            if attempt + 1 == attempts:
+                raise
+            time.sleep(min(30, 2 ** attempt))
+    raise RuntimeError("unreachable")
+
+
+def request_bytes(request: urllib.request.Request, attempts: int = 8) -> bytes:
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                return response.read()
         except urllib.error.HTTPError as error:
             if attempt + 1 == attempts:
                 raise
@@ -178,6 +248,185 @@ def fetch_thirteeners() -> list[dict]:
     return entries
 
 
+def fetch_parks(*, use_cache: bool = True) -> list[dict]:
+    if use_cache and PARK_CACHE.exists():
+        entries = json.loads(PARK_CACHE.read_text())
+        print(f"Reusing {len(entries)} state and national parks")
+        return entries
+
+    request = urllib.request.Request(GNIS_PARKS_URL, headers={"User-Agent": USER_AGENT})
+    archive = zipfile.ZipFile(io.BytesIO(request_bytes(request)))
+    state_parks: dict[str, dict] = {}
+    park_rows: dict[str, dict] = {}
+
+    for filename in archive.namelist():
+        if not filename.endswith(".txt"):
+            continue
+        with archive.open(filename) as data:
+            rows = csv.DictReader(
+                io.TextIOWrapper(data, encoding="utf-8-sig", newline=""),
+                delimiter="|",
+            )
+            for row in rows:
+                if row.get("FEATURE_CLASS") != "Park":
+                    continue
+                name = row.get("FEATURE_NAME", "")
+                park_rows.setdefault(normalize(name), row)
+                if not name.endswith(" State Park"):
+                    continue
+                entry = park_entry(row, name=name, kind="statePark")
+                if entry:
+                    state_parks[entry["id"]] = entry
+
+    existing_state_park_keys = {
+        f"{normalize(candidate['name'])}|{candidate['state']}"
+        for candidate in state_parks.values()
+    }
+    for entry in fetch_pad_us_state_parks():
+        key = f"{normalize(entry['name'])}|{entry['state']}"
+        if key not in existing_state_park_keys:
+            state_parks[entry["id"]] = entry
+            existing_state_park_keys.add(key)
+
+    national_parks: list[dict] = []
+    for name in NATIONAL_PARK_NAMES:
+        if name in NATIONAL_PARK_OVERRIDES:
+            state, latitude, longitude = NATIONAL_PARK_OVERRIDES[name]
+            national_parks.append({
+                "id": f"nps:{normalize(name).replace(' ', '-')}",
+                "name": name,
+                "state": state,
+                "latitude": latitude,
+                "longitude": longitude,
+                "kind": "nationalPark",
+            })
+            continue
+        source_name = NATIONAL_PARK_ALIASES.get(name, name)
+        entry = park_entry(
+            park_rows.get(normalize(source_name)),
+            name=name,
+            kind="nationalPark",
+            identifier=f"nps:{normalize(name).replace(' ', '-')}",
+        )
+        if not entry:
+            raise ValueError(f"GNIS did not contain current national park: {name}")
+        national_parks.append(entry)
+
+    if len(national_parks) != 63:
+        raise ValueError(f"Expected 63 national parks, found {len(national_parks)}")
+    entries = list(state_parks.values()) + national_parks
+    print(f"United States: {len(state_parks)} state parks and {len(national_parks)} national parks")
+    PARK_CACHE.write_text(json.dumps(entries, ensure_ascii=False, separators=(",", ":")))
+    return entries
+
+
+def fetch_pad_us_state_parks() -> list[dict]:
+    """Fetch canonical state-park names and derive compact representative points."""
+    groups: dict[tuple[str, str], dict[str, float | str]] = {}
+    offset = 0
+    while True:
+        parameters = urllib.parse.urlencode({
+            "where": "DesTp_Desc='State Park' AND Unit_Nm LIKE '% State Park'",
+            "outFields": "OBJECTID,Unit_Nm,State_Nm",
+            "returnGeometry": "true",
+            "outSR": "4326",
+            "geometryPrecision": "5",
+            "orderByFields": "OBJECTID",
+            "resultOffset": str(offset),
+            "resultRecordCount": "1000",
+            "f": "json",
+        })
+        request = urllib.request.Request(
+            f"{PAD_US_STATE_PARKS_URL}?{parameters}",
+            headers={"User-Agent": USER_AGENT},
+        )
+        payload = request_json(request)
+        if payload.get("error"):
+            raise RuntimeError(payload["error"])
+        features = payload.get("features", [])
+        for feature in features:
+            attributes = feature.get("attributes") or {}
+            name = attributes.get("Unit_Nm", "").strip()
+            state = attributes.get("State_Nm", "").strip()
+            rings = (feature.get("geometry") or {}).get("rings", [])
+            if not name.endswith(" State Park") or len(state) != 2 or not rings:
+                continue
+            key = (normalize(name), state)
+            group = groups.setdefault(key, {
+                "name": name,
+                "state": state,
+                "cross": 0.0,
+                "longitude_numerator": 0.0,
+                "latitude_numerator": 0.0,
+            })
+            for ring in rings:
+                if len(ring) < 3:
+                    continue
+                for first, second in zip(ring, ring[1:] + ring[:1]):
+                    longitude1, latitude1 = first
+                    longitude2, latitude2 = second
+                    cross = longitude1 * latitude2 - longitude2 * latitude1
+                    group["cross"] += cross
+                    group["longitude_numerator"] += (longitude1 + longitude2) * cross
+                    group["latitude_numerator"] += (latitude1 + latitude2) * cross
+        offset += len(features)
+        if not payload.get("exceededTransferLimit") or not features:
+            break
+
+    entries: list[dict] = []
+    for key, group in groups.items():
+        cross = float(group["cross"])
+        if abs(cross) < 1e-12:
+            continue
+        longitude = float(group["longitude_numerator"]) / (3 * cross)
+        latitude = float(group["latitude_numerator"]) / (3 * cross)
+        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            continue
+        normalized_name, state = key
+        entries.append({
+            "id": f"padus:{normalized_name.replace(' ', '-')}:{state.lower()}",
+            "name": str(group["name"]),
+            "state": state,
+            "latitude": latitude,
+            "longitude": longitude,
+            "kind": "statePark",
+        })
+    return entries
+
+
+def park_entry(
+    row: dict | None,
+    *,
+    name: str,
+    kind: str,
+    identifier: str | None = None,
+) -> dict | None:
+    if not row:
+        return None
+    try:
+        latitude = float(row["PRIM_LAT_DEC"])
+        longitude = float(row["PRIM_LONG_DEC"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    state = row.get("STATE_ALPHA", "")
+    feature_id = row.get("FEATURE_ID", "")
+    if (
+        len(state) != 2
+        or not feature_id
+        or not -90 <= latitude <= 90
+        or not -180 <= longitude <= 180
+    ):
+        return None
+    return {
+        "id": identifier or f"gnis:{feature_id}",
+        "name": name,
+        "state": state,
+        "latitude": latitude,
+        "longitude": longitude,
+        "kind": kind,
+    }
+
+
 def load_fourteeners() -> list[dict]:
     entries = json.loads(FOURTEENERS.read_text())
     if len(entries) != 58:
@@ -272,7 +521,9 @@ def write_database(entries: list[dict], generated_at: str) -> None:
                 state TEXT NOT NULL,
                 latitude REAL NOT NULL,
                 longitude REAL NOT NULL,
-                kind TEXT NOT NULL CHECK (kind IN ('crag', 'thirteener', 'fourteener')),
+                kind TEXT NOT NULL CHECK (kind IN (
+                    'crag', 'thirteener', 'fourteener', 'statePark', 'nationalPark'
+                )),
                 elevation_feet INTEGER,
                 normalized_name TEXT NOT NULL
             ) WITHOUT ROWID;
@@ -329,7 +580,7 @@ def main() -> None:
     parser.add_argument(
         "--from-json",
         type=pathlib.Path,
-        help="Convert an existing version-2 JSON catalog without downloading source data.",
+        help="Convert an existing version-3 JSON catalog without downloading source data.",
     )
     parser.add_argument(
         "--refresh",
@@ -341,7 +592,7 @@ def main() -> None:
     if arguments.from_json:
         catalog = json.loads(arguments.from_json.read_text())
         if catalog.get("version") != CATALOG_VERSION or not catalog.get("entries"):
-            raise ValueError("Expected a non-empty version-1 outdoor catalog")
+            raise ValueError("Expected a non-empty version-3 outdoor catalog")
         write_database(catalog["entries"], catalog["generatedAt"])
         return
 
@@ -359,7 +610,8 @@ def main() -> None:
 
     thirteeners = fetch_thirteeners()
     fourteeners = load_fourteeners()
-    entries = crags + thirteeners + fourteeners
+    parks = fetch_parks(use_cache=not arguments.refresh)
+    entries = crags + thirteeners + fourteeners + parks
     entries.sort(key=lambda item: (item["kind"], item["name"].casefold(), item["state"], item["id"]))
     if database_matches(entries):
         print("Outdoor catalog source data is unchanged; keeping the existing database.")

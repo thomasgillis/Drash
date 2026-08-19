@@ -36,6 +36,10 @@ struct SettingsView: View {
             }
 
             Section("Data") {
+                LabeledContent(
+                    "Saved places",
+                    value: model.savedPlacesSyncEnabled ? "Private iCloud" : "On this device"
+                )
                 LabeledContent("Current & 24-hour forecast", value: "NOAA HRRR or NWS")
                 LabeledContent("Daily forecast", value: "NOAA HRRR (default) or NWS")
                 LabeledContent("Radar", value: "NWS (default) or HRRR")
@@ -58,17 +62,27 @@ struct SettingsView: View {
             }
 
             Section("Privacy") {
-                Text("Your location is sent to api.weather.gov for NWS data and, when HRRR is selected, to api.open-meteo.com for NOAA HRRR model output. Radar tiles are requested from NWS or Iowa State's IEM HRRR service according to your selection. Outdoor-place searches remain on this device; the refresh button downloads a static catalog without sending your search text. Saved places and forecast-source choices also remain on this device. Drash has no account, ads, analytics, or third-party tracking.")
+                Text("Your location is sent to api.weather.gov for NWS data and, when HRRR is selected, to api.open-meteo.com for NOAA HRRR model output. Radar tiles are requested from NWS or Iowa State's IEM HRRR service according to your selection. Outdoor-place searches remain on this device; the refresh button downloads a static catalog without sending your search text. \(savedPlacesPrivacyDescription) Current GPS coordinates, the selected place, and weather caches do not sync. Drash has no separate account, ads, analytics, or third-party tracking.")
             }
 
             Section {
                 LabeledContent("Version", value: appVersion)
             }
         }
+        .frame(maxWidth: 760)
+        .frame(maxWidth: .infinity)
+        .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Settings")
     }
 
     private var appVersion: String {
         return Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+    }
+
+    private var savedPlacesPrivacyDescription: String {
+        if model.savedPlacesSyncEnabled {
+            return "Saved places and their daily forecast-source choices are stored locally and sync through your private iCloud database when iCloud is available."
+        }
+        return "Saved places and their daily forecast-source choices remain on this device in this development build."
     }
 }

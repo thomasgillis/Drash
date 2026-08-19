@@ -6,6 +6,8 @@ struct OutdoorCatalogEntry: Hashable, Identifiable, Sendable {
         case crag
         case thirteener
         case fourteener
+        case statePark
+        case nationalPark
     }
 
     let id: String
@@ -22,7 +24,7 @@ struct OutdoorCatalogEntry: Hashable, Identifiable, Sendable {
             state: state,
             latitude: latitude,
             longitude: longitude,
-            kind: kind == .crag ? .crag : .summit,
+            kind: weatherLocationKind,
             elevation: elevationFeet.map {
                 Elevation(
                     feet: $0,
@@ -30,6 +32,14 @@ struct OutdoorCatalogEntry: Hashable, Identifiable, Sendable {
                 )
             }
         )
+    }
+
+    private var weatherLocationKind: WeatherLocationKind {
+        switch kind {
+        case .crag: .crag
+        case .thirteener, .fourteener: .summit
+        case .statePark, .nationalPark: .park
+        }
     }
 }
 
@@ -105,8 +115,8 @@ private final class OutdoorCatalogDatabase {
     }
 
     private static let applicationID: Int64 = 0x44524153 // "DRAS"
-    private static let schemaVersion: Int64 = 2
-    private static let catalogVersion = 2
+    private static let schemaVersion: Int64 = 3
+    private static let catalogVersion = 3
     private static let maximumEntryCount = 250_000
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -165,7 +175,9 @@ private final class OutdoorCatalogDatabase {
                     SELECT COUNT(*) FROM entries
                     WHERE latitude < -90 OR latitude > 90
                        OR longitude < -180 OR longitude > 180
-                       OR kind NOT IN ('crag', 'thirteener', 'fourteener')
+                       OR kind NOT IN (
+                           'crag', 'thirteener', 'fourteener', 'statePark', 'nationalPark'
+                       )
                     """) == 0 else {
                     throw OutdoorCatalogError.invalidDatabase
                 }
@@ -198,6 +210,10 @@ private final class OutdoorCatalogDatabase {
             categoryText = "13er 13ers thirteener thirteeners summit"
         case .fourteener:
             categoryText = "14er 14ers fourteener fourteeners summit colorado"
+        case .statePark:
+            categoryText = "state park parks"
+        case .nationalPark:
+            categoryText = "national park parks"
         }
         let searchableTerms = normalizedQuery
             .split(separator: " ")
@@ -405,6 +421,14 @@ final class OutdoorCatalogStore: ObservableObject {
 
     func matchingFourteeners(_ query: String, limit: Int = 8) -> [OutdoorCatalogEntry] {
         matching(query, kind: .fourteener, limit: limit)
+    }
+
+    func matchingStateParks(_ query: String, limit: Int = 8) -> [OutdoorCatalogEntry] {
+        matching(query, kind: .statePark, limit: limit)
+    }
+
+    func matchingNationalParks(_ query: String, limit: Int = 8) -> [OutdoorCatalogEntry] {
+        matching(query, kind: .nationalPark, limit: limit)
     }
 
     func refresh() async {

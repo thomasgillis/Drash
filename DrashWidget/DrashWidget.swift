@@ -169,24 +169,45 @@ private struct DrashWidgetView: View {
     }
 
     private func accessoryView(_ weather: WidgetWeatherData) -> some View {
-        HStack(spacing: 8) {
-            weatherIcon(weather, size: 27)
-            VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: -5) {
+            HStack(spacing: 5) {
                 Text(weather.locationName)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
-                HStack(spacing: 8) {
-                    Text("\(weather.temperature)°\(weather.temperatureUnit)")
-                        .font(.headline)
-                    HStack(spacing: 2) {
+
+                Spacer(minLength: 4)
+
+                lockScreenWeatherIcon(weather, size: 14)
+            }
+
+            HStack(alignment: .lastTextBaseline, spacing: 2) {
+                Text("\(weather.temperature)°")
+                    .font(.system(size: 44, weight: .regular, design: .default))
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Text(weather.temperatureUnit)
+                    .font(.system(size: 10, weight: .regular, design: .default))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 6)
+
+                VStack(alignment: .trailing, spacing: -1) {
+                    HStack(spacing: 3) {
                         Image(systemName: "drop.fill")
+                            .font(.system(size: 10, weight: .semibold))
                         Text("\(weather.rainChance)%")
+                            .font(.system(size: 19, weight: .semibold, design: .rounded))
                     }
-                    .font(.caption.weight(.medium))
+                    .widgetAccentable()
+
+                    Text("NEXT HOUR")
+                        .font(.system(size: 8, weight: .semibold))
+                        .tracking(0.35)
+                        .foregroundStyle(.secondary)
                 }
             }
+            .lineLimit(1)
         }
-        .widgetAccentable()
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription(weather))
     }
@@ -195,31 +216,32 @@ private struct DrashWidgetView: View {
         Gauge(value: Double(weather.rainChance), in: 0...100) {
             Text("Rain")
         } currentValueLabel: {
-            VStack(spacing: -1) {
+            VStack(spacing: -2) {
                 Image(systemName: weather.symbolName)
-                    .font(.system(size: 8, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 10, weight: .semibold))
                 Text("\(weather.temperature)°")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .font(.system(size: 21, weight: .semibold, design: .rounded))
                 HStack(spacing: 1) {
                     Image(systemName: "drop.fill")
                     Text("\(weather.rainChance)%")
                 }
-                .font(.system(size: 7, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))
             }
         }
         .gaugeStyle(.accessoryCircularCapacity)
-        .tint(.blue)
+        .tint(.accentColor)
         .widgetAccentable()
         .accessibilityLabel(accessibilityDescription(weather))
     }
 
     private func inlineView(_ weather: WidgetWeatherData) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Image(systemName: weather.symbolName)
-            Text("\(weather.temperature)°\(weather.temperatureUnit)")
-            Image(systemName: "drop.fill")
-            Text("\(weather.rainChance)%")
+                .symbolRenderingMode(.hierarchical)
+            Text("\(weather.temperature)°  ·  \(weather.rainChance)% rain")
         }
+        .font(.system(size: 16, weight: .semibold))
         .widgetAccentable()
         .accessibilityLabel(accessibilityDescription(weather))
     }
@@ -235,9 +257,19 @@ private struct DrashWidgetView: View {
                 .widgetAccentable()
                 .accessibilityLabel("Open Drash for local weather")
         case .accessoryRectangular:
-            Label("Open Drash for local weather", systemImage: "location.slash")
-                .font(.caption.weight(.semibold))
-                .widgetAccentable()
+            HStack(spacing: 8) {
+                Image(systemName: "location.slash.circle.fill")
+                    .font(.title2)
+                    .widgetAccentable()
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Local weather")
+                        .font(.caption.weight(.semibold))
+                    Text("Open Drash to load")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
         default:
             VStack(alignment: .leading, spacing: 7) {
                 Image(systemName: "cloud.sun.fill")
@@ -258,6 +290,14 @@ private struct DrashWidgetView: View {
             .symbolRenderingMode(.palette)
             .foregroundStyle(.primary, Color.blue, Color.yellow)
             .font(.system(size: size))
+            .accessibilityHidden(true)
+    }
+
+    private func lockScreenWeatherIcon(_ weather: WidgetWeatherData, size: CGFloat) -> some View {
+        Image(systemName: weather.symbolName)
+            .symbolRenderingMode(.hierarchical)
+            .font(.system(size: size, weight: .semibold))
+            .widgetAccentable()
             .accessibilityHidden(true)
     }
 

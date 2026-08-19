@@ -31,6 +31,7 @@ enum ForecastModel: String, CaseIterable, Codable, Identifiable, Sendable {
 
 enum WeatherLocationKind: String, Codable, Sendable {
     case place
+    case park
     case crag
     case summit
 }
@@ -147,7 +148,7 @@ struct WeatherSnapshot: Codable, Sendable {
     let daily: [ForecastPeriod]
     let hourly: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]?
-    let observation: Observation?
+    let observation: WeatherObservation?
     let observationModel: ForecastModel?
     let hrrrCurrentTemperature: QuantitativeValue?
     let station: ObservationStation?
@@ -258,7 +259,7 @@ struct QuantitativeValue: Codable, Hashable, Sendable {
     let value: Double?
 }
 
-struct Observation: Codable, Sendable {
+struct WeatherObservation: Codable, Sendable {
     let timestamp: Date
     let textDescription: String
     let icon: URL?

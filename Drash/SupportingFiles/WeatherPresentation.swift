@@ -112,6 +112,10 @@ extension WeatherAlert {
 
 extension Date {
     var relativeUpdateDescription: String {
-        RelativeDateTimeFormatter().localizedString(for: self, relativeTo: Date())
+        relativeUpdateDescription(relativeTo: Date())
+    }
+
+    func relativeUpdateDescription(relativeTo referenceDate: Date) -> String {
+        RelativeDateTimeFormatter().localizedString(for: self, relativeTo: referenceDate)
     }
 }

@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 final class DrashUITests: XCTestCase {
@@ -20,6 +21,33 @@ final class DrashUITests: XCTestCase {
         if incidentalAlertSheetDone.waitForExistence(timeout: 1) {
             incidentalAlertSheetDone.tap()
         }
+    }
+
+    func testIPadAdaptiveNavigationAndCoreScreens() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("iPad-only adaptive layout coverage")
+        }
+
+        let forecast = app.buttons["Forecast"].firstMatch
+        let radar = app.buttons["Radar"].firstMatch
+        let places = app.buttons["Places"].firstMatch
+        let settings = app.buttons["Settings"].firstMatch
+
+        XCTAssertTrue(forecast.waitForExistence(timeout: 10))
+        XCTAssertTrue(radar.exists)
+        XCTAssertTrue(places.exists)
+        XCTAssertTrue(settings.exists)
+
+        places.tap()
+        XCTAssertTrue(app.navigationBars["Places"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.searchFields["City, park, crag, summit, or ZIP code"].exists)
+
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Fahrenheit"].exists)
+
+        forecast.tap()
+        XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 5))
     }
 
     func testForecastFavoritesUnitsRadarPlacesAndCacheRelaunch() throws {
@@ -131,7 +159,7 @@ final class DrashUITests: XCTestCase {
 
         tabBar.buttons["Places"].tap()
         XCTAssertTrue(app.buttons["My Location"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.searchFields["City, crag, summit, or ZIP code"].exists)
+        XCTAssertTrue(app.searchFields["City, park, crag, summit, or ZIP code"].exists)
         XCTAssertTrue(app.buttons["Refresh outdoor places"].exists)
 
         app.terminate()
@@ -177,6 +205,25 @@ final class DrashUITests: XCTestCase {
         radarScreenshot.name = "Native NWS radar"
         radarScreenshot.lifetime = .keepAlways
         add(radarScreenshot)
+    }
+
+    func testSavedPlacePersistsAcrossRelaunch() throws {
+        let savePlace = app.buttons["Save place"]
+        let savedPlace = app.buttons["Saved place"]
+        XCTAssertTrue(savePlace.waitForExistence(timeout: 35) || savedPlace.exists)
+
+        if savedPlace.exists {
+            savedPlace.tap()
+            XCTAssertTrue(savePlace.waitForExistence(timeout: 3))
+        }
+
+        savePlace.tap()
+        XCTAssertTrue(savedPlace.waitForExistence(timeout: 3))
+
+        app.terminate()
+        app.launch()
+
+        XCTAssertTrue(savedPlace.waitForExistence(timeout: 15))
     }
 
     func testInteractiveMeteogramTimeIndicator() throws {
@@ -288,16 +335,42 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(placesTab.waitForExistence(timeout: 10))
         placesTab.tap()
 
-        let searchField = app.searchFields["City, crag, summit, or ZIP code"]
+        let searchField = app.searchFields["City, park, crag, summit, or ZIP code"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "42,990")
+            NSPredicate(format: "label CONTAINS %@", "outdoor places")
         ).firstMatch.exists)
 
         searchField.tap()
         searchField.typeText("Mount Elbert")
         XCTAssertTrue(app.staticTexts["Mount Elbert"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["14er · 14,440 ft · CO"].exists)
+    }
+
+    func testOfflineParkCatalogSearch() throws {
+        let placesTab = app.tabBars.buttons["Places"]
+        XCTAssertTrue(placesTab.waitForExistence(timeout: 10))
+        placesTab.tap()
+
+        let searchField = app.searchFields["City, park, crag, summit, or ZIP code"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.tap()
+        searchField.typeText("Yellowstone National Park")
+        XCTAssertTrue(app.staticTexts["Yellowstone National Park"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["National park · WY"].exists)
+    }
+
+    func testOfflineStateParkCatalogSearch() throws {
+        let placesTab = app.tabBars.buttons["Places"]
+        XCTAssertTrue(placesTab.waitForExistence(timeout: 10))
+        placesTab.tap()
+
+        let searchField = app.searchFields["City, park, crag, summit, or ZIP code"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.tap()
+        searchField.typeText("Castlewood Canyon State Park")
+        XCTAssertTrue(app.staticTexts["Castlewood Canyon State Park"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["State park · CO"].exists)
     }
 
     func testRadarObservedHistory() throws {
@@ -434,7 +507,7 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
         tabBar.buttons["Places"].tap()
 
-        let search = app.searchFields["City, crag, summit, or ZIP code"]
+        let search = app.searchFields["City, park, crag, summit, or ZIP code"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
         search.typeText("Laramie, WY")
@@ -490,7 +563,7 @@ final class DrashUITests: XCTestCase {
 
         tabBar.buttons["Places"].tap()
 
-        let search = app.searchFields["City, crag, summit, or ZIP code"]
+        let search = app.searchFields["City, park, crag, summit, or ZIP code"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
         search.typeText("Mount Elbert")
@@ -590,7 +663,7 @@ final class DrashUITests: XCTestCase {
         tabBar.buttons["Places"].tap()
         XCTAssertTrue(app.buttons["My Location"].waitForExistence(timeout: 5))
 
-        let search = app.searchFields["City, crag, summit, or ZIP code"]
+        let search = app.searchFields["City, park, crag, summit, or ZIP code"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()
         search.typeText("San Francisco, CA")

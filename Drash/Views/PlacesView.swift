@@ -16,6 +16,8 @@ struct PlacesView: View {
         let fourteenerMatches = outdoorCatalog.matchingFourteeners(query)
         let thirteenerMatches = outdoorCatalog.matchingThirteeners(query)
         let cragMatches = outdoorCatalog.matchingCrags(query)
+        let nationalParkMatches = outdoorCatalog.matchingNationalParks(query)
+        let stateParkMatches = outdoorCatalog.matchingStateParks(query)
 
         List {
             Section {
@@ -80,6 +82,25 @@ struct PlacesView: View {
                             }
                         }
                         .accessibilityIdentifier("place-search-result")
+                    }
+                }
+
+                if !nationalParkMatches.isEmpty || !stateParkMatches.isEmpty {
+                    Section("Parks") {
+                        ForEach(nationalParkMatches) { park in
+                            Button {
+                                select(park)
+                            } label: {
+                                OutdoorSearchRow(result: park, altitudeUnit: model.altitudeUnit)
+                            }
+                        }
+                        ForEach(stateParkMatches) { park in
+                            Button {
+                                select(park)
+                            } label: {
+                                OutdoorSearchRow(result: park, altitudeUnit: model.altitudeUnit)
+                            }
+                        }
                     }
                 }
 
@@ -183,8 +204,11 @@ struct PlacesView: View {
                 }
             }
         }
+        .frame(maxWidth: 840)
+        .frame(maxWidth: .infinity)
+        .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Places")
-        .searchable(text: $query, prompt: "City, crag, summit, or ZIP code")
+        .searchable(text: $query, prompt: "City, park, crag, summit, or ZIP code")
         .searchFocused($searchFocused)
         .task(id: query) {
             try? await Task.sleep(for: .milliseconds(350))
@@ -196,9 +220,9 @@ struct PlacesView: View {
     private var catalogSummary: String {
         let count = outdoorCatalog.entryCount.formatted()
         if let date = outdoorCatalog.lastUpdated {
-            return "\(count) crags and summits · Updated \(date.formatted(date: .abbreviated, time: .omitted))"
+            return "\(count) outdoor places · Updated \(date.formatted(date: .abbreviated, time: .omitted))"
         }
-        return "\(count) crags and summits available offline"
+        return "\(count) outdoor places available offline"
     }
 
     private var currentLocationSubtitle: String {
@@ -250,7 +274,7 @@ private struct OutdoorSearchRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: result.kind == .crag ? "figure.climbing" : "mountain.2.fill")
+            Image(systemName: result.kind.symbol)
                 .foregroundStyle(.blue)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -278,6 +302,20 @@ private struct OutdoorSearchRow: View {
                 Elevation(feet: $0, source: .summitCatalog).formatted(for: altitudeUnit) + " · "
             } ?? ""
             return "14er · \(elevation)\(result.state)"
+        case .statePark:
+            return "State park · \(result.state)"
+        case .nationalPark:
+            return "National park · \(result.state)"
+        }
+    }
+}
+
+private extension OutdoorCatalogEntry.Kind {
+    var symbol: String {
+        switch self {
+        case .crag: "figure.climbing"
+        case .thirteener, .fourteener: "mountain.2.fill"
+        case .statePark, .nationalPark: "tree.fill"
         }
     }
 }
@@ -309,6 +347,7 @@ extension WeatherLocationKind {
     var savedPlaceSymbol: String {
         switch self {
         case .place: "building.2"
+        case .park: "tree"
         case .crag: "figure.climbing"
         case .summit: "mountain.2"
         }
@@ -321,6 +360,12 @@ extension WeatherLocationKind {
                 traits.userInterfaceStyle == .dark
                     ? UIColor(red: 0.58, green: 0.73, blue: 0.94, alpha: 1)
                     : UIColor(red: 0.32, green: 0.43, blue: 0.58, alpha: 1)
+            }
+        case .park:
+            UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 0.48, green: 0.78, blue: 0.52, alpha: 1)
+                    : UIColor(red: 0.25, green: 0.48, blue: 0.29, alpha: 1)
             }
         case .crag:
             UIColor { traits in

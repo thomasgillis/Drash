@@ -66,6 +66,7 @@ struct RadarView: View {
 
             VStack(spacing: 12) {
                 statusCard
+                    .frame(maxWidth: 720)
                     .background {
                         GeometryReader { proxy in
                             Color.clear.preference(
@@ -79,10 +80,12 @@ struct RadarView: View {
 
                 if let radarError {
                     errorBanner(radarError)
+                        .frame(maxWidth: 720)
                 }
 
                 Spacer()
                 controlsCard
+                    .frame(maxWidth: 720)
                     .background {
                         GeometryReader { proxy in
                             Color.clear.preference(
@@ -1521,6 +1524,7 @@ private extension WeatherLocationKind {
     var markerDescription: String {
         switch self {
         case .place: "city"
+        case .park: "park"
         case .crag: "climbing crag"
         case .summit: "summit"
         }

@@ -31,7 +31,7 @@ struct HRRRForecastData: Sendable {
     let daily: [ForecastPeriod]
     let hourly: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
-    let observation: Observation?
+    let observation: WeatherObservation?
     let elevation: Elevation?
 }
 
@@ -279,10 +279,13 @@ actor HRRRClient {
         let requestedAt = Date()
         try registerRequest(at: requestedAt, forceProviderRetry: forceProviderRetry)
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 20
+        )
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Drash/1.0 (personal iOS weather app)", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 20
 
         let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()
@@ -494,14 +497,14 @@ actor HRRRClient {
         from current: HRRRCurrent,
         unit: TemperatureUnit,
         timeZone: TimeZone
-    ) -> Observation? {
+    ) -> WeatherObservation? {
         guard let timestamp = date(from: current.time, timeZone: timeZone),
               let temperature = current.temperature else { return nil }
         let isDaytime = current.isDay == 1
         let speedMetersPerSecond = current.windSpeed.map { $0 / 2.236_936 }
         let gustMetersPerSecond = current.windGusts.map { $0 / 2.236_936 }
 
-        return Observation(
+        return WeatherObservation(
             timestamp: timestamp,
             textDescription: weatherDescription(code: current.weatherCode ?? 0, isDaytime: isDaytime),
             icon: nil,

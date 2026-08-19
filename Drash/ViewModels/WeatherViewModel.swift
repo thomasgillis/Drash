@@ -1,4 +1,5 @@
 import CoreLocation
+import Combine
 import Foundation
 
 @MainActor
@@ -6,6 +7,7 @@ final class WeatherViewModel: ObservableObject {
     @Published private(set) var snapshot: WeatherSnapshot?
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var lastRefreshFailureAt: Date?
     @Published var temperatureUnit: TemperatureUnit {
         didSet {
             UserDefaults.standard.set(temperatureUnit.rawValue, forKey: Keys.temperatureUnit)
@@ -29,15 +31,15 @@ final class WeatherViewModel: ObservableObject {
             refresh()
         }
     }
-    @Published private(set) var favoriteLocations: [WeatherLocation] {
-        didSet { persistFavorites() }
-    }
+    @Published private(set) var favoriteLocations: [WeatherLocation]
     @Published private(set) var selectedLocation: WeatherLocation? {
         didSet { persistSelectedLocation() }
     }
 
     private let client: WeatherClient
     private let store: SnapshotStore
+    private let savedPlacesStore: SavedPlacesStore
+    private var savedPlacesCancellable: AnyCancellable?
     private var loadTask: Task<Void, Never>?
     private var widgetLoadTask: Task<Void, Never>?
     private var loadingLocation: WeatherLocation?
@@ -55,16 +57,21 @@ final class WeatherViewModel: ObservableObject {
     private let lowPowerDeviceLocationFreshnessInterval: TimeInterval = 60 * 60
 
     private enum Keys {
-        static let favorites = "favoriteLocations"
         static let temperatureUnit = "temperatureUnit"
         static let altitudeUnit = "altitudeUnit"
         static let currentAndHourlyForecastModel = "currentAndHourlyForecastModel"
         static let selectedLocation = "selectedLocation"
     }
 
-    init(client: WeatherClient = .shared, store: SnapshotStore = .shared) {
+    init(
+        client: WeatherClient = .shared,
+        store: SnapshotStore = .shared,
+        savedPlacesStore: SavedPlacesStore? = nil
+    ) {
+        let savedPlacesStore = savedPlacesStore ?? SavedPlacesStore()
         self.client = client
         self.store = store
+        self.savedPlacesStore = savedPlacesStore
         temperatureUnit = TemperatureUnit(
             rawValue: UserDefaults.standard.string(forKey: Keys.temperatureUnit) ?? ""
         ) ?? .fahrenheit
@@ -74,14 +81,7 @@ final class WeatherViewModel: ObservableObject {
         currentAndHourlyForecastModel = ForecastModel(
             rawValue: UserDefaults.standard.string(forKey: Keys.currentAndHourlyForecastModel) ?? ""
         ) ?? .hrrr
-        if let data = UserDefaults.standard.data(forKey: Keys.favorites),
-           let saved = try? JSONDecoder().decode([WeatherLocation].self, from: data) {
-            // Current location is an always-available dynamic place, not a pinned
-            // copy of whichever coordinates happened to be current when it was saved.
-            favoriteLocations = saved.filter { !$0.isCurrentLocation }
-        } else {
-            favoriteLocations = []
-        }
+        favoriteLocations = savedPlacesStore.locations
 
         if let data = UserDefaults.standard.data(forKey: Keys.selectedLocation),
            let saved = try? JSONDecoder().decode(WeatherLocation.self, from: data) {
@@ -92,6 +92,10 @@ final class WeatherViewModel: ObservableObject {
         WidgetWeatherData.setPreferredTemperatureUnit(
             temperatureUnit == .fahrenheit ? "F" : "C"
         )
+        savedPlacesCancellable = savedPlacesStore.$locations
+            .sink { [weak self] locations in
+                self?.favoriteLocations = locations
+            }
     }
 
     func restoreLastSession(lowPowerMode: Bool = false) async {
@@ -185,6 +189,10 @@ final class WeatherViewModel: ObservableObject {
         selectedLocation?.forecastModel ?? snapshot?.location.forecastModel ?? .hrrr
     }
 
+    var didLastRefreshFail: Bool { lastRefreshFailureAt != nil }
+    var isRefreshInProgress: Bool { loadingLocation != nil }
+    var savedPlacesSyncEnabled: Bool { SavedPlacesStore.syncsWithICloud }
+
     var loadingDescription: String {
         selectedForecastModel == currentAndHourlyForecastModel
             ? "Loading \(selectedForecastModel.shortName) forecast…"
@@ -196,8 +204,8 @@ final class WeatherViewModel: ObservableObject {
               location.forecastModel != forecastModel else { return }
         location.forecastModel = forecastModel
 
-        if let index = favoriteLocations.firstIndex(where: { samePlace($0, location) }) {
-            favoriteLocations[index].forecastModel = forecastModel
+        if favoriteLocations.contains(where: { samePlace($0, location) }) {
+            savedPlacesStore.update(location)
         }
 
         selectedLocation = location
@@ -239,27 +247,22 @@ final class WeatherViewModel: ObservableObject {
     }
 
     func addFavorite(_ location: WeatherLocation) {
-        guard !location.isCurrentLocation else { return }
-        let threshold = 0.001
-        guard !favoriteLocations.contains(where: {
-            abs($0.latitude - location.latitude) < threshold && abs($0.longitude - location.longitude) < threshold
-        }) else { return }
-        favoriteLocations.append(location)
+        savedPlacesStore.add(location)
     }
 
     func toggleFavorite(_ location: WeatherLocation) {
-        guard !location.isCurrentLocation else { return }
-        if let index = favoriteLocations.firstIndex(where: { samePlace($0, location) }) {
-            favoriteLocations.remove(at: index)
-        } else {
-            favoriteLocations.append(location)
-        }
+        savedPlacesStore.toggle(location)
     }
 
     func removeFavorites(at offsets: IndexSet) {
-        for index in offsets.sorted(by: >) {
-            favoriteLocations.remove(at: index)
+        let removedLocations = offsets.compactMap { index in
+            favoriteLocations.indices.contains(index) ? favoriteLocations[index] : nil
         }
+        savedPlacesStore.remove(removedLocations)
+    }
+
+    func reloadSavedPlaces() {
+        savedPlacesStore.reload()
     }
 
     func dismissError() {
@@ -329,6 +332,7 @@ final class WeatherViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled, activeLoadID == loadID else { return }
                 finishLoad(loadID, wasSuccessful: false)
+                lastRefreshFailureAt = .now
                 if case let HRRRServiceError.rateLimited(retryAt) = error {
                     nextAutomaticFetchAt = max(nextAutomaticFetchAt ?? .distantPast, retryAt)
                 }
@@ -339,10 +343,10 @@ final class WeatherViewModel: ObservableObject {
                    samePlace(displayedLocation, location),
                    displayedLocation.forecastModel != location.forecastModel {
                     selectedLocation = displayedLocation
-                    if let index = favoriteLocations.firstIndex(where: {
+                    if favoriteLocations.contains(where: {
                         samePlace($0, displayedLocation)
                     }) {
-                        favoriteLocations[index].forecastModel = displayedLocation.forecastModel
+                        savedPlacesStore.update(displayedLocation)
                     }
                 }
                 errorMessage = error.localizedDescription
@@ -353,6 +357,7 @@ final class WeatherViewModel: ObservableObject {
     private func publishCoreForecast(_ result: WeatherSnapshot, for loadID: UUID) async {
         guard !Task.isCancelled, activeLoadID == loadID else { return }
         apply(retainingSupplementalData(in: result))
+        lastRefreshFailureAt = nil
         lastSuccessfulFetchAt = .now
         isLoading = false
     }
@@ -385,10 +390,10 @@ final class WeatherViewModel: ObservableObject {
     private func apply(_ result: WeatherSnapshot) {
         snapshot = result
         selectedLocation = result.location
-        if let index = favoriteLocations.firstIndex(where: {
+        if favoriteLocations.contains(where: {
             samePlace($0, result.location)
         }) {
-            favoriteLocations[index] = result.location
+            savedPlacesStore.update(result.location)
         }
         publishWidget(result)
     }
@@ -460,11 +465,6 @@ final class WeatherViewModel: ObservableObject {
         activeLoadID = nil
         loadTask = nil
         isLoading = false
-    }
-
-    private func persistFavorites() {
-        guard let data = try? JSONEncoder().encode(favoriteLocations) else { return }
-        UserDefaults.standard.set(data, forKey: Keys.favorites)
     }
 
     private func persistSelectedLocation() {

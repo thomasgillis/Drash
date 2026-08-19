@@ -70,7 +70,7 @@ struct PointGeometry: Decodable {
 }
 
 struct ObservationResponse: Decodable {
-    let properties: Observation
+    let properties: WeatherObservation
 }
 
 struct AlertsResponse: Decodable {
