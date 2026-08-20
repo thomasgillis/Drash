@@ -36,6 +36,7 @@ struct NWSDailyForecast: Sendable {
     let location: WeatherLocation
     let forecastOffice: String?
     let periods: [ForecastPeriod]
+    let gridElevation: Elevation?
 }
 
 struct NWSHourlyForecast: Sendable {
@@ -91,7 +92,11 @@ actor NWSClient {
         self.decoder = decoder
     }
 
-    func dailyForecast(for requestedLocation: WeatherLocation, unit: TemperatureUnit) async throws -> NWSDailyForecast {
+    func dailyForecast(
+        for requestedLocation: WeatherLocation,
+        unit: TemperatureUnit,
+        includeGridElevation: Bool = true
+    ) async throws -> NWSDailyForecast {
         let coordinates = String(format: "%.4f,%.4f", requestedLocation.latitude, requestedLocation.longitude)
         guard let pointURL = URL(string: "https://api.weather.gov/points/\(coordinates)") else {
             throw WeatherServiceError.invalidURL
@@ -100,8 +105,22 @@ actor NWSClient {
         let point = try await pointResponse(at: pointURL, cacheKey: coordinates)
         let forecastURL = addingQuery(name: "units", value: unit.apiUnit, to: point.properties.forecast)
         let daily: ForecastResponse = try await get(forecastURL)
+        let gridElevation: Elevation?
+        if requestedLocation.kind == .summit, includeGridElevation {
+            let grid: GridpointResponse = try await get(point.properties.forecastGridData)
+            guard let elevation = grid.properties.elevation?.value else {
+                throw WeatherServiceError.invalidResponse
+            }
+            gridElevation = Elevation(
+                meters: elevation,
+                source: .terrainModel
+            )
+        } else {
+            gridElevation = nil
+        }
 
         var location = requestedLocation
+        location.timeZoneIdentifier = point.properties.timeZone ?? location.timeZoneIdentifier
         if let place = point.properties.relativeLocation?.properties,
            requestedLocation.isCurrentLocation || requestedLocation.name == "Dropped pin" {
             location.name = place.city
@@ -111,7 +130,8 @@ actor NWSClient {
         return NWSDailyForecast(
             location: location,
             forecastOffice: point.properties.forecastOffice?.absoluteString,
-            periods: daily.properties.periods
+            periods: daily.properties.periods,
+            gridElevation: gridElevation
         )
     }
 
@@ -124,20 +144,32 @@ actor NWSClient {
         let point = try await pointResponse(at: pointURL, cacheKey: coordinates)
         let hourlyURL = addingQuery(name: "units", value: unit.apiUnit, to: point.properties.forecastHourly)
         let hourly: ForecastResponse = try await get(hourlyURL)
-        let grid: OptionalFetch<GridpointResponse> = await optionalGet(point.properties.forecastGridData)
+        let grid: GridpointResponse?
+        if requestedLocation.kind == .summit {
+            grid = try await get(point.properties.forecastGridData)
+        } else {
+            let optionalGrid: OptionalFetch<GridpointResponse> = await optionalGet(
+                point.properties.forecastGridData
+            )
+            grid = optionalGrid.value
+        }
 
         var location = requestedLocation
+        location.timeZoneIdentifier = point.properties.timeZone ?? location.timeZoneIdentifier
         if let place = point.properties.relativeLocation?.properties,
            requestedLocation.isCurrentLocation || requestedLocation.name == "Dropped pin" {
             location.name = place.city
             location.state = place.state
         }
 
-        let precipitationAmounts = grid.value?.properties.quantitativePrecipitation?.values.compactMap {
+        let precipitationAmounts = grid?.properties.quantitativePrecipitation?.values.compactMap {
             PrecipitationAmount(validTime: $0.validTime, millimeters: $0.value)
         } ?? []
-        let elevation = grid.value?.properties.elevation?.value.map {
+        let elevation = grid?.properties.elevation?.value.map {
             Elevation(meters: $0, source: .terrainModel)
+        }
+        if requestedLocation.kind == .summit, elevation == nil {
+            throw WeatherServiceError.invalidResponse
         }
 
         return NWSHourlyForecast(
@@ -173,6 +205,7 @@ actor NWSClient {
         let alerts = await alertResult
 
         var location = requestedLocation
+        location.timeZoneIdentifier = point.properties.timeZone ?? location.timeZoneIdentifier
         if let place = point.properties.relativeLocation?.properties,
            requestedLocation.isCurrentLocation || requestedLocation.name == "Dropped pin" {
             location.name = place.city

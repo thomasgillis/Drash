@@ -10,6 +10,7 @@ struct PointResponse: Decodable {
         let observationStations: URL
         let forecastOffice: URL?
         let relativeLocation: RelativeLocation?
+        let timeZone: String?
     }
 
     struct RelativeLocation: Decodable {

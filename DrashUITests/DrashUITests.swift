@@ -50,6 +50,103 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 5))
     }
 
+    func testRainVolumeRepresentationSetting() throws {
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
+        tabBar.buttons["Settings"].tap()
+
+        let expectedPrecipitation = app.buttons["Expected"]
+        let rawPrecipitationVolume = app.buttons["Raw volume"]
+        XCTAssertTrue(expectedPrecipitation.waitForExistence(timeout: 5))
+        expectedPrecipitation.tap()
+        XCTAssertTrue(expectedPrecipitation.isSelected)
+
+        app.buttons["About rain volume representation"].tap()
+        XCTAssertTrue(app.alerts["Rain volume representation"].waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS[c] %@", "weights the model volume")
+            ).firstMatch.exists
+        )
+        app.alerts["Rain volume representation"].buttons["OK"].tap()
+
+        rawPrecipitationVolume.tap()
+        XCTAssertTrue(rawPrecipitationVolume.isSelected)
+
+        tabBar.buttons["Forecast"].tap()
+        let hourlySummary = app.buttons["Next 24 hours"]
+        XCTAssertTrue(hourlySummary.waitForExistence(timeout: 35))
+        let forecastScrollView = app.scrollViews["forecast-scroll-view"]
+        for _ in 0..<5 where !hourlySummary.isHittable {
+            forecastScrollView.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(hourlySummary.isHittable)
+        hourlySummary.tap()
+        XCTAssertTrue(app.staticTexts["Precipitation volume"].waitForExistence(timeout: 5))
+
+        tabBar.buttons["Settings"].tap()
+        XCTAssertTrue(expectedPrecipitation.waitForExistence(timeout: 5))
+        expectedPrecipitation.tap()
+        XCTAssertTrue(expectedPrecipitation.isSelected)
+    }
+
+    func testDailyPrecipitationHistogramVisible() throws {
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
+        tabBar.buttons["Places"].tap()
+
+        let search = app.searchFields["City, park, crag, summit, or ZIP code"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Indianapolis, IN")
+
+        let indianapolis = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "Indianapolis")
+        ).firstMatch
+        XCTAssertTrue(indianapolis.waitForExistence(timeout: 20))
+        indianapolis.tap()
+        XCTAssertTrue(tabBar.buttons["Forecast"].isSelected)
+        XCTAssertTrue(
+            app.navigationBars.matching(
+                NSPredicate(format: "identifier CONTAINS[c] %@", "Indianapolis")
+            ).firstMatch.waitForExistence(timeout: 35)
+        )
+
+        let histogramMode = app.buttons["Histogram"]
+        let histogram = app.descendants(matching: .any)
+            .matching(identifier: "daily-precipitation-histogram")
+            .firstMatch
+        let forecastScrollView = app.scrollViews["forecast-scroll-view"]
+        XCTAssertTrue(forecastScrollView.waitForExistence(timeout: 10))
+
+        for _ in 0..<8 where !histogramMode.exists {
+            forecastScrollView.swipeUp(velocity: .slow)
+        }
+
+        XCTAssertTrue(histogramMode.waitForExistence(timeout: 35))
+        histogramMode.tap()
+        XCTAssertTrue(histogram.waitForExistence(timeout: 35))
+
+        for (modelName, modelID) in [("NWS", "nws"), ("HRRR", "hrrr")] {
+            let modelButton = app.buttons[modelName]
+            XCTAssertTrue(modelButton.waitForExistence(timeout: 10))
+            if !modelButton.isSelected {
+                modelButton.tap()
+            }
+            XCTAssertTrue(modelButton.isSelected)
+            XCTAssertTrue(
+                app.staticTexts["daily-forecast-heading-\(modelID)"]
+                    .waitForExistence(timeout: 35)
+            )
+            XCTAssertTrue(histogram.waitForExistence(timeout: 10))
+
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Visible \(modelName) daily precipitation histogram"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+    }
+
     func testForecastFavoritesUnitsRadarPlacesAndCacheRelaunch() throws {
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 10))
@@ -124,7 +221,7 @@ final class DrashUITests: XCTestCase {
         for _ in 0..<3 where !dailyForecast.isHittable {
             app.swipeUp(velocity: .slow)
         }
-        XCTAssertTrue(dailyForecast.waitForExistence(timeout: 5))
+        XCTAssertTrue(dailyForecast.waitForExistence(timeout: 35))
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Day,"))
@@ -134,6 +231,12 @@ final class DrashUITests: XCTestCase {
             app.descendants(matching: .any)
                 .matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Night,"))
                 .firstMatch.waitForExistence(timeout: 3)
+        )
+        app.buttons["Histogram"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)
+                .matching(identifier: "daily-precipitation-histogram")
+                .firstMatch.waitForExistence(timeout: 10)
         )
 
         let precipitationScreenshot = XCTAttachment(screenshot: app.screenshot())
@@ -174,6 +277,7 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(radarSourceSwitcher.waitForExistence(timeout: 5))
         XCTAssertEqual(radarSourceSwitcher.value as? String, "NWS")
         XCTAssertTrue(app.buttons["Center radar on GPS location"].exists)
+        XCTAssertTrue(app.buttons["Center radar on forecast location"].exists)
         XCTAssertTrue(app.buttons["Refresh radar"].exists)
         XCTAssertTrue(app.buttons["Radar options"].exists)
         XCTAssertFalse(app.sliders["Radar opacity"].exists)

@@ -14,7 +14,7 @@ struct RadarView: View {
     @State private var mapStyle = RadarMapStyle.standard
     @State private var refreshToken = 0
     @State private var recenterToken = 0
-    @State private var gpsRecenterCoordinate: CLLocationCoordinate2D?
+    @State private var recenterCoordinate: CLLocationCoordinate2D?
     @State private var isAwaitingGPSRecenter = false
     @State private var showsOpacityControl = false
     @State private var showsPrecipitationLegend = false
@@ -41,7 +41,6 @@ struct RadarView: View {
                 NativeRadarMap(
                     location: radarLocation,
                     savedPlaces: model.favoriteLocations,
-                    deviceLocation: locationManager.currentLocation,
                     visibleContentInsets: radarMapVisibleContentInsets,
                     onSelectPlace: { location in
                         model.select(location)
@@ -51,7 +50,7 @@ struct RadarView: View {
                     mapStyle: mapStyle,
                     refreshToken: refreshToken,
                     recenterToken: recenterToken,
-                    gpsRecenterCoordinate: gpsRecenterCoordinate,
+                    recenterCoordinate: recenterCoordinate,
                     radarSource: radarSource,
                     frame: renderedRadarFrame,
                     prefetchFrames: nearbyRadarFrames,
@@ -173,7 +172,7 @@ struct RadarView: View {
         .onReceive(locationManager.$currentLocation.compactMap { $0 }) { location in
             guard isAwaitingGPSRecenter else { return }
             isAwaitingGPSRecenter = false
-            recenterRadar(on: location)
+            recenterRadar(on: location.coordinate)
         }
     }
 
@@ -340,15 +339,29 @@ struct RadarView: View {
                 centerRadarOnGPS()
             } label: {
                 Image(systemName: "location.fill")
-                    .frame(width: 24, height: 28)
+                    .font(.title3.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Center radar on GPS location")
+
+            Button {
+                recenterRadar(on: radarLocation.coordinate)
+            } label: {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.title3.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Center radar on forecast location")
 
             Button {
                 refreshToken += 1
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .frame(width: 24, height: 28)
+                    .font(.title3.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Refresh radar")
         }
@@ -382,45 +395,44 @@ struct RadarView: View {
 
     private var radarTimeline: some View {
         VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                Text(selectedRadarFrame?.validTime.formatted(date: .omitted, time: .shortened) ?? "—")
-                    .font(.caption.monospacedDigit().weight(.semibold))
+            HStack(spacing: 10) {
+                HStack(spacing: 14) {
+                    Button {
+                        stepRadar(by: -1)
+                    } label: {
+                        Image(systemName: "backward.frame.fill")
+                            .font(.title3.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(selectedFrameIndex == 0)
+                    .accessibilityLabel("Previous radar frame")
 
-                if isLoadingRadarFrame {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .accessibilityLabel("Loading radar frame")
+                    Button {
+                        isPlaying.toggle()
+                    } label: {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title3.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(isLowPowerModeEnabled)
+                    .accessibilityLabel(isPlaying ? "Pause radar" : "Play radar")
+                    .accessibilityHint(
+                        isLowPowerModeEnabled ? "Playback is unavailable in Low Power Mode" : ""
+                    )
+
+                    Button {
+                        stepRadar(by: 1)
+                    } label: {
+                        Image(systemName: "forward.frame.fill")
+                            .font(.title3.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(selectedFrameIndex >= radarFrames.count - 1)
+                    .accessibilityLabel("Next radar frame")
                 }
-
-                Spacer()
-
-                Button {
-                    stepRadar(by: -1)
-                } label: {
-                    Image(systemName: "backward.frame.fill")
-                }
-                .disabled(selectedFrameIndex == 0)
-                .accessibilityLabel("Previous radar frame")
-
-                Button {
-                    isPlaying.toggle()
-                } label: {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 18)
-                }
-                .disabled(isLowPowerModeEnabled)
-                .accessibilityLabel(isPlaying ? "Pause radar" : "Play radar")
-                .accessibilityHint(
-                    isLowPowerModeEnabled ? "Playback is unavailable in Low Power Mode" : ""
-                )
-
-                Button {
-                    stepRadar(by: 1)
-                } label: {
-                    Image(systemName: "forward.frame.fill")
-                }
-                .disabled(selectedFrameIndex >= radarFrames.count - 1)
-                .accessibilityLabel("Next radar frame")
 
                 radarUtilityButtons
             }
@@ -460,6 +472,23 @@ struct RadarView: View {
             HStack {
                 Text(radarSource.timelineStartLabel)
                 Spacer()
+                HStack(spacing: 5) {
+                    if isLoadingRadarFrame {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .accessibilityLabel("Loading radar frame")
+                    }
+                    Text(
+                        selectedRadarFrame?.validTime.formatted(
+                            date: .omitted,
+                            time: .shortened
+                        ) ?? "—"
+                    )
+                    .monospacedDigit()
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                }
+                Spacer()
                 Text(radarSource.timelineEndLabel)
             }
             .font(.caption2)
@@ -492,15 +521,15 @@ struct RadarView: View {
     private func centerRadarOnGPS() {
         isAwaitingGPSRecenter = true
         if let currentLocation = locationManager.currentLocation {
-            recenterRadar(on: currentLocation)
+            recenterRadar(on: currentLocation.coordinate)
         }
         if !locationManager.requestLocation() {
             isAwaitingGPSRecenter = false
         }
     }
 
-    private func recenterRadar(on location: CLLocation) {
-        gpsRecenterCoordinate = location.coordinate
+    private func recenterRadar(on coordinate: CLLocationCoordinate2D) {
+        recenterCoordinate = coordinate
         recenterToken += 1
     }
 
@@ -887,14 +916,13 @@ private struct NativeRadarMap: UIViewRepresentable {
 
     let location: WeatherLocation
     let savedPlaces: [WeatherLocation]
-    let deviceLocation: CLLocation?
     let visibleContentInsets: UIEdgeInsets
     let onSelectPlace: (WeatherLocation) -> Void
     let opacity: Double
     let mapStyle: RadarMapStyle
     let refreshToken: Int
     let recenterToken: Int
-    let gpsRecenterCoordinate: CLLocationCoordinate2D?
+    let recenterCoordinate: CLLocationCoordinate2D?
     let radarSource: RadarSource
     let frame: RadarFrame?
     let prefetchFrames: [RadarFrame]
@@ -919,15 +947,7 @@ private struct NativeRadarMap: UIViewRepresentable {
 
         context.coordinator.visibleContentInsets = visibleContentInsets
         context.coordinator.updateSavedPlaces(savedPlaces, on: mapView)
-        context.coordinator.updateFallbackLocation(location, on: mapView, animated: false)
-        if let deviceLocation {
-            context.coordinator.hasCenteredOnDeviceLocation = true
-            context.coordinator.center(
-                on: deviceLocation.coordinate,
-                mapView: mapView,
-                animated: false
-            )
-        }
+        context.coordinator.updateForecastLocation(location, on: mapView, animated: false)
         if isActive, frame != nil {
             context.coordinator.installRadar(
                 on: mapView,
@@ -952,20 +972,10 @@ private struct NativeRadarMap: UIViewRepresentable {
             on: mapView
         )
         context.coordinator.onSelectPlace = onSelectPlace
-        context.coordinator.visibleContentInsets = visibleContentInsets
+        context.coordinator.updateVisibleContentInsets(visibleContentInsets, on: mapView)
 
         if context.coordinator.lastLocationID != location.id {
-            context.coordinator.updateFallbackLocation(location, on: mapView, animated: true)
-        }
-
-        if !context.coordinator.hasCenteredOnDeviceLocation,
-           let deviceLocation {
-            context.coordinator.hasCenteredOnDeviceLocation = true
-            context.coordinator.center(
-                on: deviceLocation.coordinate,
-                mapView: mapView,
-                animated: true
-            )
+            context.coordinator.updateForecastLocation(location, on: mapView, animated: true)
         }
 
         if context.coordinator.savedPlaces != savedPlaces {
@@ -998,10 +1008,9 @@ private struct NativeRadarMap: UIViewRepresentable {
 
         if context.coordinator.lastRecenterToken != recenterToken {
             context.coordinator.lastRecenterToken = recenterToken
-            if let gpsRecenterCoordinate {
-                context.coordinator.hasCenteredOnDeviceLocation = true
+            if let recenterCoordinate {
                 context.coordinator.center(
-                    on: gpsRecenterCoordinate,
+                    on: recenterCoordinate,
                     mapView: mapView,
                     animated: true
                 )
@@ -1036,7 +1045,6 @@ private struct NativeRadarMap: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
         var onSelectPlace: (WeatherLocation) -> Void
         var lastLocationID: UUID?
-        var hasCenteredOnDeviceLocation = false
         var lastRefreshToken = -1
         var lastRecenterToken = 0
         var lastMapStyle = RadarMapStyle.standard
@@ -1046,6 +1054,7 @@ private struct NativeRadarMap: UIViewRepresentable {
         var opacity = 0.68
         var savedPlaces: [WeatherLocation] = []
         var visibleContentInsets = UIEdgeInsets(top: 80, left: 12, bottom: 372, right: 12)
+        private var centeredCoordinate: CLLocationCoordinate2D?
         var radarRenderer: MKTileOverlayRenderer?
         private var radarOverlay: RadarTileOverlay?
         private var pendingRadarRenderer: MKTileOverlayRenderer?
@@ -1231,14 +1240,20 @@ private struct NativeRadarMap: UIViewRepresentable {
             }
         }
 
-        func updateFallbackLocation(
+        func updateForecastLocation(
             _ location: WeatherLocation,
             on mapView: MKMapView,
             animated: Bool
         ) {
             lastLocationID = location.id
-            guard !hasCenteredOnDeviceLocation else { return }
             center(on: location, mapView: mapView, animated: animated)
+        }
+
+        func updateVisibleContentInsets(_ insets: UIEdgeInsets, on mapView: MKMapView) {
+            guard visibleContentInsets != insets else { return }
+            visibleContentInsets = insets
+            guard let centeredCoordinate else { return }
+            center(on: centeredCoordinate, mapView: mapView, animated: false)
         }
 
         func updateSavedPlaces(_ places: [WeatherLocation], on mapView: MKMapView) {
@@ -1257,6 +1272,7 @@ private struct NativeRadarMap: UIViewRepresentable {
             animated: Bool,
             deferUntilLayout: Bool = true
         ) {
+            centeredCoordinate = coordinate
             let region = MKCoordinateRegion(
                 center: coordinate,
                 latitudinalMeters: NativeRadarMap.defaultRadarSpanMeters,
@@ -1281,26 +1297,35 @@ private struct NativeRadarMap: UIViewRepresentable {
                 }
                 return
             }
-
-            let screenCenter = CGPoint(x: mapView.bounds.midX, y: mapView.bounds.midY)
-            let visibleCenter = CGPoint(x: visibleBounds.midX, y: visibleBounds.midY)
-            let fittedMapRect = mapView.mapRectThatFits(mapRect(for: region))
             let targetPoint = MKMapPoint(coordinate)
-            let horizontalOffset = (visibleCenter.x - screenCenter.x)
-                / mapView.bounds.width * fittedMapRect.width
-            let verticalOffset = (visibleCenter.y - screenCenter.y)
-                / mapView.bounds.height * fittedMapRect.height
-            let cameraCenter = MKMapPoint(
-                x: targetPoint.x - horizontalOffset,
-                y: targetPoint.y - verticalOffset
+            let requestedMapRect = mapRect(for: region)
+            let centeredRegionSize = MKMapSize(
+                width: 2 * max(
+                    targetPoint.x - requestedMapRect.minX,
+                    requestedMapRect.maxX - targetPoint.x
+                ),
+                height: 2 * max(
+                    targetPoint.y - requestedMapRect.minY,
+                    requestedMapRect.maxY - targetPoint.y
+                )
             )
-            let adjustedMapRect = MKMapRect(
-                x: cameraCenter.x - fittedMapRect.width / 2,
-                y: cameraCenter.y - fittedMapRect.height / 2,
-                width: fittedMapRect.width,
-                height: fittedMapRect.height
+            let mapPointsPerScreenPoint = max(
+                centeredRegionSize.width / visibleBounds.width,
+                centeredRegionSize.height / visibleBounds.height
             )
-            mapView.setVisibleMapRect(adjustedMapRect, animated: animated)
+            let visibleMapSize = MKMapSize(
+                width: mapPointsPerScreenPoint * mapView.bounds.width,
+                height: mapPointsPerScreenPoint * mapView.bounds.height
+            )
+            let exactVisibleMapRect = MKMapRect(
+                x: targetPoint.x
+                    - visibleMapSize.width * visibleBounds.midX / mapView.bounds.width,
+                y: targetPoint.y
+                    - visibleMapSize.height * visibleBounds.midY / mapView.bounds.height,
+                width: visibleMapSize.width,
+                height: visibleMapSize.height
+            )
+            mapView.setVisibleMapRect(exactVisibleMapRect, animated: animated)
         }
 
         private func mapRect(for region: MKCoordinateRegion) -> MKMapRect {
@@ -1416,7 +1441,7 @@ private final class RadarPlaceAnnotationView: MKAnnotationView {
         layer.borderWidth = 1.25
         collisionMode = .circle
         displayPriority = .defaultHigh
-        canShowCallout = false
+        canShowCallout = true
         isAccessibilityElement = true
         accessibilityTraits = .button
 
@@ -1429,6 +1454,11 @@ private final class RadarPlaceAnnotationView: MKAnnotationView {
             glyphView.widthAnchor.constraint(equalToConstant: 15),
             glyphView.heightAnchor.constraint(equalToConstant: 15)
         ])
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
+            (view: RadarPlaceAnnotationView, _: UITraitCollection) in
+            view.updateAppearanceColors()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -1501,14 +1531,6 @@ private final class RadarPlaceAnnotationView: MKAnnotationView {
             setArmed(true, animated: true)
         }
         return true
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else {
-            return
-        }
-        updateAppearanceColors()
     }
 
     private func updateAppearanceColors() {

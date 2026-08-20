@@ -33,6 +33,7 @@ struct HRRRForecastData: Sendable {
     let precipitationAmounts: [PrecipitationAmount]
     let observation: WeatherObservation?
     let elevation: Elevation?
+    let timeZoneIdentifier: String
 }
 
 actor WeatherClient {
@@ -55,7 +56,7 @@ actor WeatherClient {
     ) async throws -> WeatherSnapshot {
         let needsHRRR = location.forecastModel == .hrrr || hourlyModel == .hrrr
         let needsNWSDaily = location.forecastModel == .nws
-        let needsNWSHourly = hourlyModel == .nws
+        let needsNWSHourly = location.forecastModel == .nws || hourlyModel == .nws
 
         async let hrrrResult: HRRRForecastData? = needsHRRR
             ? hrrrClient.forecast(
@@ -65,7 +66,11 @@ actor WeatherClient {
             )
             : nil
         async let nwsDailyResult: NWSDailyForecast? = needsNWSDaily
-            ? nwsClient.dailyForecast(for: location, unit: unit)
+            ? nwsClient.dailyForecast(
+                for: location,
+                unit: unit,
+                includeGridElevation: !needsNWSHourly
+            )
             : nil
         async let nwsHourlyResult: NWSHourlyForecast? = needsNWSHourly
             ? nwsClient.hourlyForecast(for: location, unit: unit)
@@ -76,13 +81,28 @@ actor WeatherClient {
             nwsHourlyResult
         )
 
-        let daily = location.forecastModel == .hrrr ? hrrr?.daily : nwsDaily?.periods
-        let hourly = hourlyModel == .hrrr ? hrrr?.hourly : nwsHourly?.periods
+        let nwsGridElevation = nwsHourly?.elevation ?? nwsDaily?.gridElevation
+        let daily = location.forecastModel == .hrrr
+            ? hrrr?.daily
+            : nwsDaily?.periods.adjustedForSummit(
+                location,
+                gridElevation: nwsGridElevation,
+                unit: unit
+            )
+        let hourly = hourlyModel == .hrrr
+            ? hrrr?.hourly
+            : nwsHourly?.periods.adjustedForSummit(
+                location,
+                gridElevation: nwsGridElevation,
+                unit: unit
+            )
         guard let daily, let hourly, !daily.isEmpty, !hourly.isEmpty else {
             throw HRRRServiceError.invalidResponse
         }
 
         var resolvedLocation = nwsDaily?.location ?? nwsHourly?.location ?? location
+        resolvedLocation.timeZoneIdentifier = resolvedLocation.timeZoneIdentifier
+            ?? hrrr?.timeZoneIdentifier
         resolvedLocation.elevation = resolvedLocation.elevation
             ?? hrrr?.elevation
             ?? nwsHourly?.elevation
@@ -96,6 +116,9 @@ actor WeatherClient {
             daily: daily,
             hourly: hourly,
             precipitationAmounts: hourlyModel == .hrrr
+                ? hrrr?.precipitationAmounts
+                : nwsHourly?.precipitationAmounts,
+            dailyPrecipitationAmounts: location.forecastModel == .hrrr
                 ? hrrr?.precipitationAmounts
                 : nwsHourly?.precipitationAmounts,
             observation: hourlyModel == .hrrr ? hrrr?.observation : nil,
@@ -137,6 +160,7 @@ actor WeatherClient {
                 daily: core.daily,
                 hourly: core.hourly,
                 precipitationAmounts: core.precipitationAmounts,
+                dailyPrecipitationAmounts: core.dailyPrecipitationAmounts,
                 observation: hourlyModel == .nws
                     ? context.observation ?? core.observation
                     : core.observation,
@@ -156,6 +180,7 @@ actor WeatherClient {
                 daily: core.daily,
                 hourly: core.hourly,
                 precipitationAmounts: core.precipitationAmounts,
+                dailyPrecipitationAmounts: core.dailyPrecipitationAmounts,
                 observation: core.observation,
                 observationModel: hourlyModel,
                 hrrrCurrentTemperature: core.hrrrCurrentTemperature,
@@ -165,6 +190,74 @@ actor WeatherClient {
                 hourlyForecastModel: core.hourlyForecastModel
             )
         }
+    }
+}
+
+private extension Array where Element == ForecastPeriod {
+    func adjustedForSummit(
+        _ location: WeatherLocation,
+        gridElevation: Elevation?,
+        unit: TemperatureUnit
+    ) -> [ForecastPeriod] {
+        guard location.kind == .summit,
+              let summitElevation = location.elevation,
+              let gridElevation else { return self }
+
+        // The NWS point API is bound to a fixed forecast-grid terrain height and
+        // does not accept a target elevation. Apply the standard environmental
+        // lapse rate to temperature only; wind and precipitation remain the
+        // original NWS grid guidance.
+        let elevationDifference = summitElevation.meters - gridElevation.meters
+        let celsiusCorrection = elevationDifference * 0.0065
+        let correction = unit == .fahrenheit
+            ? celsiusCorrection * 9 / 5
+            : celsiusCorrection
+        guard abs(correction) >= 0.05 else { return self }
+
+        return map { period in
+            let adjustedTemperature = Int(
+                (Double(period.temperature) - correction).rounded()
+            )
+            return period.replacingTemperature(with: adjustedTemperature)
+        }
+    }
+}
+
+private extension ForecastPeriod {
+    func replacingTemperature(with adjustedTemperature: Int) -> ForecastPeriod {
+        ForecastPeriod(
+            number: number,
+            name: name,
+            startTime: startTime,
+            endTime: endTime,
+            isDaytime: isDaytime,
+            temperature: adjustedTemperature,
+            temperatureUnit: temperatureUnit,
+            probabilityOfPrecipitation: probabilityOfPrecipitation,
+            dewpoint: dewpoint,
+            relativeHumidity: relativeHumidity,
+            windSpeed: windSpeed,
+            windDirection: windDirection,
+            icon: icon,
+            shortForecast: shortForecast,
+            detailedForecast: detailedForecast.replacingNWSForecastTemperature(
+                with: adjustedTemperature
+            )
+        )
+    }
+}
+
+private extension String {
+    func replacingNWSForecastTemperature(with adjustedTemperature: Int) -> String {
+        guard let expression = try? NSRegularExpression(
+            pattern: #"(?i)((?:high|low) (?:near|around)|temperature (?:rising|falling) to (?:near|around))\s+-?\d+"#
+        ) else { return self }
+        let range = NSRange(startIndex..., in: self)
+        return expression.stringByReplacingMatches(
+            in: self,
+            range: range,
+            withTemplate: "$1 \(adjustedTemperature)"
+        )
     }
 }
 
@@ -221,7 +314,8 @@ actor HRRRClient {
                 observation(from: $0, unit: unit, timeZone: timeZone)
             },
             elevation: requestedLocation.elevation
-                ?? response.elevation.map { Elevation(meters: $0, source: .terrainModel) }
+                ?? response.elevation.map { Elevation(meters: $0, source: .terrainModel) },
+            timeZoneIdentifier: timeZone.identifier
         )
     }
 
@@ -484,11 +578,13 @@ actor HRRRClient {
 
     private func precipitationAmounts(from response: HRRRResponse, timeZone: TimeZone) -> [PrecipitationAmount] {
         response.hourly.time.indices.compactMap { index in
-            guard let startTime = date(from: response.hourly.time[index], timeZone: timeZone),
+            guard let endTime = date(from: response.hourly.time[index], timeZone: timeZone),
                   let millimeters = response.hourly.precipitation.compactValue(at: index) else { return nil }
-            let endTime = response.hourly.time.value(at: index + 1)
+            // Open-Meteo precipitation is the sum for the preceding hour, so its
+            // timestamp marks the end—not the beginning—of the accumulation.
+            let startTime = response.hourly.time.value(at: index - 1)
                 .flatMap { date(from: $0, timeZone: timeZone) }
-                ?? startTime.addingTimeInterval(3_600)
+                ?? endTime.addingTimeInterval(-3_600)
             return PrecipitationAmount(startTime: startTime, endTime: endTime, millimeters: millimeters)
         }
     }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: WeatherViewModel
+    @State private var showsPrecipitationRepresentationInfo = false
 
     var body: some View {
         Form {
@@ -17,6 +18,31 @@ struct SettingsView: View {
                     Text("Meters").tag(AltitudeUnit.meters)
                 }
                 .pickerStyle(.segmented)
+            }
+
+            Section("Rain volume") {
+                HStack {
+                    Text("Representation")
+                    Spacer()
+                    Button {
+                        showsPrecipitationRepresentationInfo = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("About rain volume representation")
+                }
+
+                Picker(
+                    "Rain volume representation",
+                    selection: $model.precipitationVolumeRepresentation
+                ) {
+                    ForEach(PrecipitationVolumeRepresentation.allCases) { representation in
+                        Text(representation.title).tag(representation)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("precipitation-volume-representation")
             }
 
             Section("Current & 24-hour forecast") {
@@ -58,6 +84,7 @@ struct SettingsView: View {
             Section("Coverage") {
                 Text("The National Weather Service forecast API covers the United States and its territories. Observation data can be delayed at the source.")
                 Text("Current conditions and the expandable next-24-hours forecast default to HRRR and can be switched together to NWS above. The daily section has its own per-place HRRR/NWS choice. HRRR is limited to its continental U.S. domain.")
+                Text("For summit locations, Drash adjusts NWS temperatures from the NWS grid elevation to the stored summit elevation using the standard environmental lapse rate. NWS wind, precipitation, and weather type remain grid guidance.")
                 Text("Radar defaults to the official NWS layer for recent observed history. You can switch to HRRR simulated reflectivity through forecast hour 18. Both cover the continental United States.")
             }
 
@@ -73,6 +100,16 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("Settings")
+        .alert(
+            "Rain volume representation",
+            isPresented: $showsPrecipitationRepresentationInfo
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(
+                "Expected precipitation weights the model volume by its precipitation chance for the same interval. For example, 0.10 in at 40% is displayed as 0.04 in. Raw volume shows the unweighted amount supplied by the selected model. This setting changes volume bars and totals, but not the displayed rain percentages."
+            )
+        }
     }
 
     private var appVersion: String {

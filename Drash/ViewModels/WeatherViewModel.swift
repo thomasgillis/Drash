@@ -22,6 +22,14 @@ final class WeatherViewModel: ObservableObject {
             UserDefaults.standard.set(altitudeUnit.rawValue, forKey: Keys.altitudeUnit)
         }
     }
+    @Published var precipitationVolumeRepresentation: PrecipitationVolumeRepresentation {
+        didSet {
+            UserDefaults.standard.set(
+                precipitationVolumeRepresentation.rawValue,
+                forKey: Keys.precipitationVolumeRepresentation
+            )
+        }
+    }
     @Published var currentAndHourlyForecastModel: ForecastModel {
         didSet {
             UserDefaults.standard.set(
@@ -59,8 +67,10 @@ final class WeatherViewModel: ObservableObject {
     private enum Keys {
         static let temperatureUnit = "temperatureUnit"
         static let altitudeUnit = "altitudeUnit"
+        static let precipitationVolumeRepresentation = "precipitationVolumeRepresentation"
         static let currentAndHourlyForecastModel = "currentAndHourlyForecastModel"
         static let selectedLocation = "selectedLocation"
+        static let precipitationTimingVersion = "precipitationTimingVersion"
     }
 
     init(
@@ -78,6 +88,11 @@ final class WeatherViewModel: ObservableObject {
         altitudeUnit = AltitudeUnit(
             rawValue: UserDefaults.standard.string(forKey: Keys.altitudeUnit) ?? ""
         ) ?? .feet
+        precipitationVolumeRepresentation = PrecipitationVolumeRepresentation(
+            rawValue: UserDefaults.standard.string(
+                forKey: Keys.precipitationVolumeRepresentation
+            ) ?? ""
+        ) ?? .expected
         currentAndHourlyForecastModel = ForecastModel(
             rawValue: UserDefaults.standard.string(forKey: Keys.currentAndHourlyForecastModel) ?? ""
         ) ?? .hrrr
@@ -109,6 +124,8 @@ final class WeatherViewModel: ObservableObject {
             requiresHourlySourceRefresh = cachedSnapshot.effectiveHourlyForecastModel
                 != currentAndHourlyForecastModel
                 || cachedSnapshot.observationModel != currentAndHourlyForecastModel
+                || cachedSnapshot.dailyPrecipitationAmounts == nil
+                || UserDefaults.standard.integer(forKey: Keys.precipitationTimingVersion) < 2
             if let selectedLocation {
                 if sameForecast(selectedLocation, cachedSnapshot.location) {
                     snapshot = cachedSnapshot
@@ -129,7 +146,7 @@ final class WeatherViewModel: ObservableObject {
 
         if let selectedLocation {
             if requiresHourlySourceRefresh {
-                load(selectedLocation)
+                load(selectedLocation, force: true)
             } else if !selectedLocation.isCurrentLocation,
                       (!restoredMatchingSnapshot || !hasFreshForecast(lowPowerMode: lowPowerMode)) {
                 load(selectedLocation)
@@ -326,6 +343,7 @@ final class WeatherViewModel: ObservableObject {
                 guard !Task.isCancelled, activeLoadID == loadID else { return }
                 apply(result)
                 await store.save(result)
+                UserDefaults.standard.set(2, forKey: Keys.precipitationTimingVersion)
                 finishLoad(loadID, wasSuccessful: true)
             } catch is CancellationError {
                 // A new location superseded this request.
@@ -375,6 +393,7 @@ final class WeatherViewModel: ObservableObject {
             daily: core.daily,
             hourly: core.hourly,
             precipitationAmounts: core.precipitationAmounts,
+            dailyPrecipitationAmounts: core.dailyPrecipitationAmounts,
             observation: retainsSameHourlySource && core.location.kind != .summit
                 ? previous.observation ?? core.observation
                 : core.observation,

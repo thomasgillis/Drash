@@ -29,6 +29,27 @@ enum ForecastModel: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum PrecipitationVolumeRepresentation: String, CaseIterable, Identifiable, Sendable {
+    case expected
+    case raw
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .expected: return "Expected"
+        case .raw: return "Raw volume"
+        }
+    }
+
+    var chartTitle: String {
+        switch self {
+        case .expected: return "Expected precipitation"
+        case .raw: return "Precipitation volume"
+        }
+    }
+}
+
 enum WeatherLocationKind: String, Codable, Sendable {
     case place
     case park
@@ -83,6 +104,7 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
     var forecastModel: ForecastModel
     var kind: WeatherLocationKind
     var elevation: Elevation?
+    var timeZoneIdentifier: String?
 
     init(
         id: UUID = UUID(),
@@ -93,7 +115,8 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         isCurrentLocation: Bool = false,
         forecastModel: ForecastModel = .hrrr,
         kind: WeatherLocationKind = .place,
-        elevation: Elevation? = nil
+        elevation: Elevation? = nil,
+        timeZoneIdentifier: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -104,6 +127,7 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         self.forecastModel = forecastModel
         self.kind = kind
         self.elevation = elevation
+        self.timeZoneIdentifier = timeZoneIdentifier
     }
 
     var coordinate: CLLocationCoordinate2D {
@@ -113,6 +137,10 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
     var displayName: String {
         guard let state, !state.isEmpty else { return name }
         return "\(name), \(state)"
+    }
+
+    var timeZone: TimeZone {
+        timeZoneIdentifier.flatMap(TimeZone.init(identifier:)) ?? .autoupdatingCurrent
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -125,6 +153,7 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         case forecastModel
         case kind
         case elevation
+        case timeZoneIdentifier
     }
 
     init(from decoder: Decoder) throws {
@@ -138,6 +167,7 @@ struct WeatherLocation: Codable, Hashable, Identifiable, Sendable {
         forecastModel = try container.decodeIfPresent(ForecastModel.self, forKey: .forecastModel) ?? .hrrr
         kind = try container.decodeIfPresent(WeatherLocationKind.self, forKey: .kind) ?? .place
         elevation = try container.decodeIfPresent(Elevation.self, forKey: .elevation)
+        timeZoneIdentifier = try container.decodeIfPresent(String.self, forKey: .timeZoneIdentifier)
     }
 }
 
@@ -148,6 +178,7 @@ struct WeatherSnapshot: Codable, Sendable {
     let daily: [ForecastPeriod]
     let hourly: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]?
+    let dailyPrecipitationAmounts: [PrecipitationAmount]?
     let observation: WeatherObservation?
     let observationModel: ForecastModel?
     let hrrrCurrentTemperature: QuantitativeValue?
@@ -252,6 +283,57 @@ struct ForecastPeriod: Codable, Identifiable, Hashable, Sendable {
     var id: Int { number }
     var precipitationChance: Int { Int(probabilityOfPrecipitation?.value ?? 0) }
     var humidity: Int? { relativeHumidity?.value.map(Int.init) }
+}
+
+extension PrecipitationVolumeRepresentation {
+    func presentedAmounts(
+        _ amounts: [PrecipitationAmount],
+        probabilityPeriods: [ForecastPeriod]
+    ) -> [PrecipitationAmount] {
+        guard self == .expected else {
+            return amounts.sorted { $0.startTime < $1.startTime }
+        }
+
+        return amounts.flatMap { amount -> [PrecipitationAmount] in
+            let duration = amount.endTime.timeIntervalSince(amount.startTime)
+            guard duration > 0 else { return [] }
+
+            let relevantPeriods = probabilityPeriods.filter {
+                $0.endTime > amount.startTime && $0.startTime < amount.endTime
+            }
+            guard !relevantPeriods.isEmpty else { return [] }
+
+            var boundaries = [amount.startTime, amount.endTime]
+            for period in relevantPeriods {
+                boundaries.append(max(period.startTime, amount.startTime))
+                boundaries.append(min(period.endTime, amount.endTime))
+            }
+            let sortedBoundaries = Array(Set(boundaries)).sorted()
+
+            return zip(sortedBoundaries, sortedBoundaries.dropFirst()).compactMap {
+                segmentStart, segmentEnd in
+                let segmentDuration = segmentEnd.timeIntervalSince(segmentStart)
+                guard segmentDuration > 0 else { return nil }
+
+                // Prefer hourly probabilities when hourly and day/night periods overlap.
+                let overlappingPeriods = relevantPeriods.filter {
+                    $0.startTime < segmentEnd && $0.endTime > segmentStart
+                }
+                guard let probabilityPeriod = overlappingPeriods.min(by: {
+                        $0.endTime.timeIntervalSince($0.startTime)
+                            < $1.endTime.timeIntervalSince($1.startTime)
+                    }) else { return nil }
+
+                let probability = min(max(Double(probabilityPeriod.precipitationChance) / 100, 0), 1)
+                return PrecipitationAmount(
+                    startTime: segmentStart,
+                    endTime: segmentEnd,
+                    millimeters: amount.millimeters * segmentDuration / duration * probability
+                )
+            }
+        }
+        .sorted { $0.startTime < $1.startTime }
+    }
 }
 
 struct QuantitativeValue: Codable, Hashable, Sendable {
