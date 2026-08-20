@@ -21,7 +21,7 @@ Created by [Thomas Gillis](https://github.com/thomasgillis) in Boulder, for all 
   </tr>
 </table>
 
-## Included in 0.0.7
+## Included in 0.0.9
 
 - A shared HRRR/NWS source setting for current conditions and the expandable next-24-hours card
 - Per-place daily switching between the seven-day NWS outlook and HRRR's shorter horizon

@@ -93,6 +93,10 @@ struct ForecastView: View {
             .sorted { $0.startTime < $1.startTime }
         let rollingHourlyPeriods = Array(activeHourlyPeriods.prefix(24))
         let rawHourlyAmounts = snapshot.precipitationAmounts ?? []
+        let expectedHourlyAmounts = PrecipitationVolumeRepresentation.expected.presentedAmounts(
+            rawHourlyAmounts,
+            probabilityPeriods: snapshot.hourly
+        )
         let hourlyAmounts = model.precipitationVolumeRepresentation.presentedAmounts(
             rawHourlyAmounts,
             probabilityPeriods: snapshot.hourly
@@ -104,6 +108,10 @@ struct ForecastView: View {
             == snapshot.effectiveHourlyForecastModel
             ? snapshot.hourly + snapshot.daily
             : snapshot.daily
+        let expectedDailyAmounts = PrecipitationVolumeRepresentation.expected.presentedAmounts(
+            rawDailyAmounts,
+            probabilityPeriods: dailyProbabilityPeriods
+        )
         let dailyAmounts = model.precipitationVolumeRepresentation.presentedAmounts(
             rawDailyAmounts,
             probabilityPeriods: dailyProbabilityPeriods
@@ -133,6 +141,8 @@ struct ForecastView: View {
             HourlyForecastCard(
                 periods: rollingHourlyPeriods,
                 precipitationAmounts: hourlyAmounts,
+                rawPrecipitationAmounts: rawHourlyAmounts,
+                expectedPrecipitationAmounts: expectedHourlyAmounts,
                 unit: model.temperatureUnit,
                 forecastModel: snapshot.effectiveHourlyForecastModel,
                 precipitationVolumeRepresentation: model.precipitationVolumeRepresentation
@@ -141,7 +151,11 @@ struct ForecastView: View {
                 periods: snapshot.daily,
                 hourlyPeriods: snapshot.hourly,
                 hourlyPrecipitationAmounts: hourlyAmounts,
+                rawHourlyPrecipitationAmounts: rawHourlyAmounts,
+                expectedHourlyPrecipitationAmounts: expectedHourlyAmounts,
                 dailyPrecipitationAmounts: dailyAmounts,
+                rawDailyPrecipitationAmounts: rawDailyAmounts,
+                expectedDailyPrecipitationAmounts: expectedDailyAmounts,
                 unit: model.temperatureUnit,
                 altitudeUnit: model.altitudeUnit,
                 location: snapshot.location,
@@ -393,7 +407,12 @@ private struct AlertAvailabilityBanner: View {
 private struct HourlyStrip: View {
     let title: String
     let periods: [ForecastPeriod]
+    let precipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
+    let precipitationVolumeRepresentation: PrecipitationVolumeRepresentation
+    @Binding var selectedTime: Date?
+    @State private var centeredPeriodID: ForecastPeriod.ID?
+    @State private var hasUserScrolledHorizontally = false
     var showsHeader = true
     var usesCardBackground = true
 
@@ -406,6 +425,8 @@ private struct HourlyStrip: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(periods) { period in
+                        let precipitationVolume = precipitationVolume(during: period)
+
                         VStack(spacing: 7) {
                             Text(period.startTime, format: .dateTime.hour())
                                 .font(.caption)
@@ -420,25 +441,97 @@ private struct HourlyStrip: View {
                                 .frame(height: 38)
                             Text("\(period.temperature(in: unit))°")
                                 .font(.headline)
-                            if period.precipitationChance > 0 {
-                                Label("\(period.precipitationChance)%", systemImage: "drop.fill")
+                            if period.precipitationChance > 0 || (precipitationVolume ?? 0) > 0 {
+                                Label(
+                                    "\(formattedVolume(precipitationVolume)) (\(period.precipitationChance)%)",
+                                    systemImage: "drop.fill"
+                                )
                                     .labelStyle(.titleAndIcon)
-                                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                                    .font(.caption2.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(ForecastPalette.blue)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.65)
                             } else {
-                                Text(" ").font(.subheadline)
+                                Text(" ").font(.caption2)
                             }
                         }
-                        .frame(width: 60)
+                        .frame(width: 72)
                         .accessibilityElement(children: .combine)
-                        .accessibilityLabel("\(period.startTime.formatted(date: .omitted, time: .shortened)), \(period.shortForecast), \(period.temperature(in: unit)) degrees, \(period.precipitationChance) percent precipitation")
+                        .accessibilityLabel(accessibilityDescription(
+                            for: period,
+                            precipitationVolume: precipitationVolume
+                        ))
                     }
+                }
+                .scrollTargetLayout()
+            }
+            .accessibilityIdentifier("hourly-forecast-strip")
+            .accessibilityValue(centeredPeriodAccessibilityValue)
+            .scrollPosition(id: $centeredPeriodID, anchor: .center)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) else {
+                            return
+                        }
+                        hasUserScrolledHorizontally = true
+                    }
+            )
+            .onChange(of: centeredPeriodID) { _, periodID in
+                guard hasUserScrolledHorizontally,
+                      let periodID,
+                      let period = periods.first(where: { $0.id == periodID }),
+                      selectedTime != period.startTime else { return }
+                selectedTime = period.startTime
+            }
+            .onChange(of: selectedTime) { _, time in
+                guard let time,
+                      let period = periods.first(where: { $0.startTime == time }),
+                      centeredPeriodID != period.id else { return }
+                withAnimation(.smooth(duration: 0.18)) {
+                    centeredPeriodID = period.id
                 }
             }
         }
         .foregroundStyle(ForecastPalette.ink)
         .padding()
         .modifier(OptionalGlassCard(enabled: usesCardBackground))
+    }
+
+    private func precipitationVolume(during period: ForecastPeriod) -> Double? {
+        precipitationAmounts.precipitationVolume(during: period)
+    }
+
+    private var centeredPeriodAccessibilityValue: String {
+        guard let centeredPeriodID,
+              let period = periods.first(where: { $0.id == centeredPeriodID }) else {
+            return "No centered hour"
+        }
+        return "Centered hour \(period.startTime.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private func formattedVolume(_ millimeters: Double?) -> String {
+        compactPrecipitationVolume(millimeters, unit: unit)
+    }
+
+    private func accessibleVolume(_ millimeters: Double?, during period: ForecastPeriod) -> String {
+        guard let millimeters else { return "unavailable" }
+        return PrecipitationAmount(
+            startTime: period.startTime,
+            endTime: period.endTime,
+            millimeters: millimeters
+        ).formattedAmount(for: unit)
+    }
+
+    private func accessibilityDescription(
+        for period: ForecastPeriod,
+        precipitationVolume: Double?
+    ) -> String {
+        let time = period.startTime.formatted(date: .omitted, time: .shortened)
+        let amount = accessibleVolume(precipitationVolume, during: period)
+        return "\(time), \(period.shortForecast), \(period.temperature(in: unit)) degrees, "
+            + "\(period.precipitationChance) percent precipitation chance, "
+            + "\(precipitationVolumeRepresentation.chartTitle.lowercased()) \(amount)"
     }
 }
 
@@ -458,11 +551,14 @@ private struct OptionalGlassCard: ViewModifier {
 private struct HourlyForecastCard: View {
     let periods: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
+    let rawPrecipitationAmounts: [PrecipitationAmount]
+    let expectedPrecipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
     let forecastModel: ForecastModel
     let precipitationVolumeRepresentation: PrecipitationVolumeRepresentation
     @State private var isExpanded = false
     @State private var expandedContentHeight: CGFloat = 0
+    @State private var selectedTime: Date?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -493,7 +589,10 @@ private struct HourlyForecastCard: View {
             HourlyStrip(
                 title: "",
                 periods: periods,
+                precipitationAmounts: precipitationAmounts,
                 unit: unit,
+                precipitationVolumeRepresentation: precipitationVolumeRepresentation,
+                selectedTime: $selectedTime,
                 showsHeader: false,
                 usesCardBackground: false
             )
@@ -506,9 +605,12 @@ private struct HourlyForecastCard: View {
                 MeteogramCard(
                     periods: periods,
                     precipitationAmounts: precipitationAmounts,
+                    rawPrecipitationAmounts: rawPrecipitationAmounts,
+                    expectedPrecipitationAmounts: expectedPrecipitationAmounts,
                     unit: unit,
                     forecastModel: forecastModel,
                     precipitationVolumeRepresentation: precipitationVolumeRepresentation,
+                    selectedTime: $selectedTime,
                     usesCardBackground: false,
                     isVisible: isExpanded
                 )
@@ -532,6 +634,7 @@ private struct HourlyForecastCard: View {
 }
 
 private struct MeteogramCard: View {
+    let title: String
     let periods: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
@@ -540,27 +643,34 @@ private struct MeteogramCard: View {
     let usesCardBackground: Bool
     let isVisible: Bool
     private let derivedData: MeteogramDerivedData
-    @State private var selectedTime: Date?
+    @Binding private var selectedTime: Date?
 
     init(
+        title: String = "24-hour forecast",
         periods: [ForecastPeriod],
         precipitationAmounts: [PrecipitationAmount],
+        rawPrecipitationAmounts: [PrecipitationAmount],
+        expectedPrecipitationAmounts: [PrecipitationAmount],
         unit: TemperatureUnit,
         forecastModel: ForecastModel,
         precipitationVolumeRepresentation: PrecipitationVolumeRepresentation,
+        selectedTime: Binding<Date?>,
         usesCardBackground: Bool = true,
         isVisible: Bool = true
     ) {
+        self.title = title
         self.periods = periods
         self.precipitationAmounts = precipitationAmounts
         self.unit = unit
         self.forecastModel = forecastModel
         self.precipitationVolumeRepresentation = precipitationVolumeRepresentation
+        self._selectedTime = selectedTime
         self.usesCardBackground = usesCardBackground
         self.isVisible = isVisible
         derivedData = MeteogramDerivedData(
             periods: periods,
-            precipitationAmounts: precipitationAmounts,
+            rawPrecipitationAmounts: rawPrecipitationAmounts,
+            expectedPrecipitationAmounts: expectedPrecipitationAmounts,
             unit: unit
         )
     }
@@ -568,28 +678,34 @@ private struct MeteogramCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("24-hour forecast", systemImage: "chart.xyaxis.line")
+                Label(title, systemImage: "chart.xyaxis.line")
                     .font(.headline)
                 Spacer()
             }
 
-            HStack(spacing: 18) {
-                Label {
+            HStack(spacing: 14) {
+                HStack(spacing: 5) {
+                    Capsule()
+                        .fill(temperatureGradient)
+                        .frame(width: 18, height: 3)
                     Text("Temperature \(unit.symbol)")
-                } icon: {
-                    Image(systemName: "line.diagonal")
-                        .foregroundStyle(.orange)
                 }
-                Label {
-                    Text(precipitationVolumeRepresentation.chartTitle)
-                    .accessibilityIdentifier("precipitation-chart-legend")
-                } icon: {
-                    Image(systemName: "drop.fill")
-                        .foregroundStyle(ForecastPalette.blue)
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(ForecastPalette.precipitation.opacity(0.72))
+                        .frame(width: 9, height: 12)
+                    Text("Volume")
+                        .accessibilityIdentifier("precipitation-chart-legend")
+                }
+                HStack(spacing: 5) {
+                    Capsule()
+                        .fill(expectedPrecipitationGradient)
+                        .frame(width: 18, height: 3)
+                    Text("Expected")
                 }
                 Spacer(minLength: 0)
             }
-            .font(.caption.weight(.medium))
+            .font(.caption2.weight(.semibold))
             .foregroundStyle(ForecastPalette.secondary)
 
             Chart {
@@ -602,19 +718,23 @@ private struct MeteogramCard: View {
                     .annotation(
                         position: .top,
                         alignment: selectionAnnotationAlignment,
-                        spacing: -26
+                        spacing: -26,
+                        overflowResolution: AnnotationOverflowResolution(
+                            x: .fit(to: .chart),
+                            y: .disabled
+                        )
                     ) {
                         selectionBadge(for: selectedPeriod)
                     }
                 }
 
                 ForEach(periods) { period in
-                    if let amount = precipitationAmount(for: period), amount.millimeters > 0 {
+                    if let amount = rawPrecipitationAmount(for: period), amount.millimeters > 0 {
                         BarMark(
                             x: .value("Hour", period.startTime),
                             yStart: .value("No precipitation", temperatureDomain.lowerBound),
                             yEnd: .value(
-                                "Precipitation amount",
+                                "Precipitation volume",
                                 scaledAmount(amount.millimeters)
                             ),
                             width: .fixed(8)
@@ -622,11 +742,81 @@ private struct MeteogramCard: View {
                         .foregroundStyle(precipitationBarColor)
                         .cornerRadius(4)
                         .accessibilityLabel(
-                            "\(precipitationVolumeRepresentation.chartTitle) at \(period.startTime.formatted(date: .omitted, time: .shortened))"
+                            "Precipitation volume at \(period.startTime.formatted(date: .omitted, time: .shortened))"
                         )
-                        .accessibilityValue(formattedExpectedPrecipitation(for: period))
+                        .accessibilityValue(formattedRawPrecipitation(for: period))
                         .accessibilityIdentifier("precipitation-mark-\(period.id)")
                     }
+                }
+
+                ForEach(periods) { period in
+                    if let amount = expectedPrecipitationAmount(for: period) {
+                        LineMark(
+                            x: .value("Expected precipitation time", period.startTime),
+                            y: .value(
+                                "Expected precipitation glow",
+                                scaledAmount(amount.millimeters)
+                            ),
+                            series: .value("Series", "Expected precipitation glow")
+                        )
+                        .foregroundStyle(ForecastPalette.expectedPrecipitationGlow)
+                        .lineStyle(StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.catmullRom)
+                    }
+                }
+
+                ForEach(periods) { period in
+                    if let amount = expectedPrecipitationAmount(for: period) {
+                        LineMark(
+                            x: .value("Expected precipitation time", period.startTime),
+                            y: .value(
+                                "Expected precipitation",
+                                scaledAmount(amount.millimeters)
+                            ),
+                            series: .value("Series", "Expected precipitation")
+                        )
+                        .foregroundStyle(expectedPrecipitationGradient)
+                        .lineStyle(StrokeStyle(lineWidth: 2.75, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.catmullRom)
+                        .accessibilityLabel(
+                            "Expected precipitation at \(period.startTime.formatted(date: .omitted, time: .shortened))"
+                        )
+                        .accessibilityValue(formattedExpectedPrecipitation(for: period))
+                        .accessibilityIdentifier("expected-precipitation-mark-\(period.id)")
+
+                        if selectedPeriod?.id == period.id {
+                            PointMark(
+                                x: .value("Selected expected precipitation time", period.startTime),
+                                y: .value(
+                                    "Selected expected precipitation",
+                                    scaledAmount(amount.millimeters)
+                                )
+                            )
+                            .foregroundStyle(ForecastPalette.card)
+                            .symbolSize(88)
+
+                            PointMark(
+                                x: .value("Selected expected precipitation time", period.startTime),
+                                y: .value(
+                                    "Selected expected precipitation",
+                                    scaledAmount(amount.millimeters)
+                                )
+                            )
+                            .foregroundStyle(ForecastPalette.expectedPrecipitation)
+                            .symbolSize(38)
+                        }
+                    }
+                }
+
+                ForEach(periods) { period in
+                    LineMark(
+                        x: .value("Time", period.startTime),
+                        y: .value("Temperature glow", Double(period.temperature(in: unit))),
+                        series: .value("Series", "Temperature glow")
+                    )
+                    .foregroundStyle(ForecastPalette.temperatureGlow)
+                    .lineStyle(StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.catmullRom)
                 }
 
                 ForEach(periods) { period in
@@ -635,16 +825,9 @@ private struct MeteogramCard: View {
                         y: .value("Temperature", Double(period.temperature(in: unit))),
                         series: .value("Series", "Temperature")
                     )
-                    .foregroundStyle(.orange)
-                    .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(temperatureGradient)
+                    .lineStyle(StrokeStyle(lineWidth: 2.75, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.catmullRom)
-
-                    PointMark(
-                        x: .value("Time", period.startTime),
-                        y: .value("Temperature", Double(period.temperature(in: unit)))
-                    )
-                    .foregroundStyle(.orange)
-                    .symbolSize(24)
                     .accessibilityLabel(
                         "Temperature at \(period.startTime.formatted(date: .omitted, time: .shortened))"
                     )
@@ -656,8 +839,15 @@ private struct MeteogramCard: View {
                             x: .value("Selected time", period.startTime),
                             y: .value("Selected temperature", Double(period.temperature(in: unit)))
                         )
-                        .foregroundStyle(.orange)
-                        .symbolSize(46)
+                        .foregroundStyle(ForecastPalette.card)
+                        .symbolSize(88)
+
+                        PointMark(
+                            x: .value("Selected time", period.startTime),
+                            y: .value("Selected temperature", Double(period.temperature(in: unit)))
+                        )
+                        .foregroundStyle(ForecastPalette.temperatureEnd)
+                        .symbolSize(38)
                     }
                 }
             }
@@ -685,7 +875,13 @@ private struct MeteogramCard: View {
             .chartXAxis {
                 AxisMarks(values: .stride(by: .hour, count: 6)) { value in
                     AxisGridLine().foregroundStyle(ForecastPalette.grid.opacity(0.7))
-                    AxisValueLabel(format: .dateTime.hour())
+                    AxisValueLabel(
+                        format: .dateTime.hour(),
+                        centered: false,
+                        anchor: .top,
+                        collisionResolution: .disabled,
+                        offsetsMarks: false
+                    )
                         .foregroundStyle(ForecastPalette.secondary)
                 }
             }
@@ -725,7 +921,8 @@ private struct MeteogramCard: View {
             }
             .accessibilityLabel(
                 "Combined 24 hour temperature and precipitation chart. "
-                    + "Blue bars show precipitation allocated to each forecast hour."
+                    + "Blue bars show precipitation volume. "
+                    + "The cyan line shows probability-weighted expected precipitation."
             )
             .accessibilityValue(selectedPeriodAccessibilityValue)
             .accessibilityHint("Swipe horizontally to move the time indicator")
@@ -759,6 +956,25 @@ private struct MeteogramCard: View {
         ForecastPalette.precipitation.opacity(0.7)
     }
 
+    private var temperatureGradient: LinearGradient {
+        LinearGradient(
+            colors: [ForecastPalette.temperatureStart, ForecastPalette.temperatureEnd],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    private var expectedPrecipitationGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                ForecastPalette.expectedPrecipitationStart,
+                ForecastPalette.expectedPrecipitation
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
     private var selectedPeriod: ForecastPeriod? {
         guard let selectedTime else { return nil }
         return derivedData.periodByStartTime[selectedTime]
@@ -778,7 +994,9 @@ private struct MeteogramCard: View {
         guard let period = selectedPeriod else { return "No time selected" }
         return "Selected \(period.startTime.formatted(date: .omitted, time: .shortened)), "
             + "temperature \(period.temperature(in: unit))\(unit.symbol), "
-            + "\(precipitationVolumeRepresentation.chartTitle.lowercased()) \(formattedExpectedPrecipitation(for: period))"
+            + "precipitation volume \(formattedRawPrecipitation(for: period)), "
+            + "expected precipitation \(formattedExpectedPrecipitation(for: period)), "
+            + "\(period.precipitationChance) percent chance"
     }
 
     private var precipitationAxisValues: [Double] {
@@ -822,19 +1040,24 @@ private struct MeteogramCard: View {
         unit == .celsius ? millimeters : millimeters / 25.4
     }
 
-    private func precipitationAmount(for period: ForecastPeriod) -> PrecipitationAmount? {
-        derivedData.precipitationByPeriodID[period.id]
+    private func rawPrecipitationAmount(for period: ForecastPeriod) -> PrecipitationAmount? {
+        derivedData.rawPrecipitationByPeriodID[period.id]
     }
 
-    private func expectedPrecipitation(for period: ForecastPeriod) -> Double? {
-        guard let amount = precipitationAmount(for: period), amount.millimeters > 0 else {
-            return nil
-        }
-        return amount.millimeters
+    private func expectedPrecipitationAmount(for period: ForecastPeriod) -> PrecipitationAmount? {
+        derivedData.expectedPrecipitationByPeriodID[period.id]
+    }
+
+    private func formattedRawPrecipitation(for period: ForecastPeriod) -> String {
+        formattedPrecipitation(rawPrecipitationAmount(for: period)?.millimeters)
     }
 
     private func formattedExpectedPrecipitation(for period: ForecastPeriod) -> String {
-        guard let millimeters = expectedPrecipitation(for: period) else {
+        formattedPrecipitation(expectedPrecipitationAmount(for: period)?.millimeters)
+    }
+
+    private func formattedPrecipitation(_ millimeters: Double?) -> String {
+        guard let millimeters else {
             return unit == .celsius ? "0 mm" : "0 in"
         }
         if unit == .celsius {
@@ -854,8 +1077,12 @@ private struct MeteogramCard: View {
             Text(period.startTime, format: .dateTime.hour().minute())
                 .fontWeight(.bold)
             Text("\(period.temperature(in: unit))\(unit.symbol)")
-            Label(formattedExpectedPrecipitation(for: period), systemImage: "drop.fill")
+            Label(formattedRawPrecipitation(for: period), systemImage: "drop.fill")
                 .labelStyle(.titleAndIcon)
+                .foregroundStyle(.white)
+            Label(formattedExpectedPrecipitation(for: period), systemImage: "sparkles")
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(ForecastPalette.expectedPrecipitation)
         }
             .font(.caption2.monospacedDigit())
             .fixedSize(horizontal: true, vertical: false)
@@ -916,20 +1143,24 @@ private struct MeteogramCard: View {
     }
 
     private var relevantPrecipitationAmounts: [PrecipitationAmount] {
-        derivedData.relevantPrecipitationAmounts
+        guard let first = periods.first, let last = periods.last else { return [] }
+        return precipitationAmounts
+            .filter { $0.endTime > first.startTime && $0.startTime < last.endTime }
+            .sorted { $0.startTime < $1.startTime }
     }
 }
 
 private struct MeteogramDerivedData {
     let temperatureDomain: ClosedRange<Double>
-    let relevantPrecipitationAmounts: [PrecipitationAmount]
-    let precipitationByPeriodID: [Int: PrecipitationAmount]
+    let rawPrecipitationByPeriodID: [Int: PrecipitationAmount]
+    let expectedPrecipitationByPeriodID: [Int: PrecipitationAmount]
     let periodByStartTime: [Date: ForecastPeriod]
     let precipitationAmountUpperBound: Double
 
     init(
         periods: [ForecastPeriod],
-        precipitationAmounts: [PrecipitationAmount],
+        rawPrecipitationAmounts: [PrecipitationAmount],
+        expectedPrecipitationAmounts: [PrecipitationAmount],
         unit: TemperatureUnit
     ) {
         let temperatures = periods.map { Double($0.temperature(in: unit)) }
@@ -940,42 +1171,24 @@ private struct MeteogramDerivedData {
             temperatureDomain = 0...100
         }
 
-        if let first = periods.first, let last = periods.last {
-            relevantPrecipitationAmounts = precipitationAmounts
-                .filter { $0.endTime > first.startTime && $0.startTime < last.endTime }
-                .sorted { $0.startTime < $1.startTime }
-        } else {
-            relevantPrecipitationAmounts = []
-        }
-
-        var precipitationByPeriodID: [Int: PrecipitationAmount] = [:]
-        for period in periods {
-            var foundOverlap = false
-            let millimeters = relevantPrecipitationAmounts.reduce(0.0) { total, amount in
-                let overlapStart = max(period.startTime, amount.startTime)
-                let overlapEnd = min(period.endTime, amount.endTime)
-                let overlap = overlapEnd.timeIntervalSince(overlapStart)
-                let duration = amount.endTime.timeIntervalSince(amount.startTime)
-                guard overlap > 0, duration > 0 else { return total }
-                foundOverlap = true
-                return total + amount.millimeters * overlap / duration
-            }
-            if foundOverlap {
-                precipitationByPeriodID[period.id] = PrecipitationAmount(
-                    startTime: period.startTime,
-                    endTime: period.endTime,
-                    millimeters: millimeters
-                )
-            }
-        }
-        self.precipitationByPeriodID = precipitationByPeriodID
+        let rawByPeriodID = Self.amountsByPeriodID(
+            periods: periods,
+            precipitationAmounts: rawPrecipitationAmounts
+        )
+        let expectedByPeriodID = Self.amountsByPeriodID(
+            periods: periods,
+            precipitationAmounts: expectedPrecipitationAmounts
+        )
+        rawPrecipitationByPeriodID = rawByPeriodID
+        expectedPrecipitationByPeriodID = expectedByPeriodID
         periodByStartTime = Dictionary(
             periods.map { ($0.startTime, $0) },
             uniquingKeysWith: { first, _ in first }
         )
 
         let maximum = periods.compactMap { period -> Double? in
-            guard let amount = precipitationByPeriodID[period.id] else { return nil }
+            guard let amount = rawByPeriodID[period.id]
+                ?? expectedByPeriodID[period.id] else { return nil }
             return unit == .celsius ? amount.millimeters : amount.millimeters / 25.4
         }.max() ?? 0
         let minimum = unit == .celsius ? 1.0 : 0.05
@@ -987,6 +1200,24 @@ private struct MeteogramDerivedData {
             step = padded <= 0.25 ? 0.05 : (padded <= 1 ? 0.25 : 0.5)
         }
         precipitationAmountUpperBound = (padded / step).rounded(.up) * step
+    }
+
+    private static func amountsByPeriodID(
+        periods: [ForecastPeriod],
+        precipitationAmounts: [PrecipitationAmount]
+    ) -> [Int: PrecipitationAmount] {
+        var result: [Int: PrecipitationAmount] = [:]
+        for period in periods {
+            guard let millimeters = precipitationAmounts.precipitationVolume(during: period) else {
+                continue
+            }
+            result[period.id] = PrecipitationAmount(
+                startTime: period.startTime,
+                endTime: period.endTime,
+                millimeters: millimeters
+            )
+        }
+        return result
     }
 }
 
@@ -1169,7 +1400,11 @@ private struct DailyForecastCard: View {
     let periods: [ForecastPeriod]
     let hourlyPeriods: [ForecastPeriod]
     let hourlyPrecipitationAmounts: [PrecipitationAmount]
+    let rawHourlyPrecipitationAmounts: [PrecipitationAmount]
+    let expectedHourlyPrecipitationAmounts: [PrecipitationAmount]
     let dailyPrecipitationAmounts: [PrecipitationAmount]
+    let rawDailyPrecipitationAmounts: [PrecipitationAmount]
+    let expectedDailyPrecipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
     let altitudeUnit: AltitudeUnit
     let location: WeatherLocation
@@ -1204,7 +1439,7 @@ private struct DailyForecastCard: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(ForecastPalette.blue)
-                .accessibilityLabel("About forecast models and mountain elevation")
+                .accessibilityLabel("About forecast models and histogram")
                 .popover(isPresented: $showsForecastInfo) {
                     DailyForecastInfo(
                         location: location,
@@ -1250,6 +1485,11 @@ private struct DailyForecastCard: View {
                         precipitationAmounts: hourlyPrecipitationAmounts.filter {
                             $0.endTime > row.startTime && $0.startTime < row.endTime
                         },
+                        dailyPrecipitationAmounts: dailyPrecipitationAmounts,
+                        rawHourlyPrecipitationAmounts: rawHourlyPrecipitationAmounts,
+                        expectedHourlyPrecipitationAmounts: expectedHourlyPrecipitationAmounts,
+                        rawDailyPrecipitationAmounts: rawDailyPrecipitationAmounts,
+                        expectedDailyPrecipitationAmounts: expectedDailyPrecipitationAmounts,
                         unit: unit,
                         forecastModel: forecastModel,
                         precipitationVolumeRepresentation: precipitationVolumeRepresentation
@@ -1257,6 +1497,13 @@ private struct DailyForecastCard: View {
                 } label: {
                     DailyForecastSummary(
                         row: row,
+                        hourlyPeriods: hourlyPeriods.filter {
+                            $0.endTime > row.startTime && $0.startTime < row.endTime
+                        },
+                        rawHourlyPrecipitationAmounts: rawHourlyPrecipitationAmounts,
+                        expectedHourlyPrecipitationAmounts: expectedHourlyPrecipitationAmounts,
+                        rawDailyPrecipitationAmounts: rawDailyPrecipitationAmounts,
+                        expectedDailyPrecipitationAmounts: expectedDailyPrecipitationAmounts,
                         precipitationAmounts: dailyPrecipitationAmounts,
                         unit: unit,
                         timeZone: location.timeZone,
@@ -1347,6 +1594,25 @@ private struct DailyForecastInfo: View {
                 systemImage: "drop.fill"
             )
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 9) {
+                Text("Histogram key")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(ForecastPalette.secondary)
+
+                histogramKey(title: "Precipitation volume") {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(ForecastPalette.precipitation.opacity(0.72))
+                        .frame(width: 10, height: 14)
+                }
+                histogramKey(title: "Expected precipitation") {
+                    Capsule()
+                        .fill(expectedPrecipitationGradient)
+                        .frame(width: 22, height: 3)
+                }
+            }
+
             Label(sourceContext, systemImage: "clock.fill")
         }
         .font(.subheadline)
@@ -1367,6 +1633,27 @@ private struct DailyForecastInfo: View {
             return "Tap a day for \(dailyModel.shortName) timing, wind, and expected amount."
         }
         return "Daily outlook: \(dailyModel.shortName) · Hourly timing and amounts: \(hourlyModel.shortName)."
+    }
+
+    private func histogramKey<Swatch: View>(
+        title: String,
+        @ViewBuilder swatch: () -> Swatch
+    ) -> some View {
+        HStack(spacing: 8) {
+            swatch().frame(width: 24, alignment: .center)
+            Text(title)
+        }
+    }
+
+    private var expectedPrecipitationGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                ForecastPalette.expectedPrecipitationStart,
+                ForecastPalette.expectedPrecipitation
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }
 
@@ -1417,9 +1704,15 @@ private struct DayForecastDetailView: View {
     let row: DailyForecastRow
     let hourlyPeriods: [ForecastPeriod]
     let precipitationAmounts: [PrecipitationAmount]
+    let dailyPrecipitationAmounts: [PrecipitationAmount]
+    let rawHourlyPrecipitationAmounts: [PrecipitationAmount]
+    let expectedHourlyPrecipitationAmounts: [PrecipitationAmount]
+    let rawDailyPrecipitationAmounts: [PrecipitationAmount]
+    let expectedDailyPrecipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
     let forecastModel: ForecastModel
     let precipitationVolumeRepresentation: PrecipitationVolumeRepresentation
+    @State private var selectedTime: Date?
 
     var body: some View {
         ZStack {
@@ -1453,18 +1746,49 @@ private struct DayForecastDetailView: View {
                     }
 
                     if !hourlyPeriods.isEmpty {
-                        HourlyStrip(title: "Hourly forecast", periods: hourlyPeriods, unit: unit)
-                    }
+                        VStack(spacing: 0) {
+                            HourlyStrip(
+                                title: "Hourly forecast",
+                                periods: hourlyPeriods,
+                                precipitationAmounts: precipitationAmounts,
+                                unit: unit,
+                                precipitationVolumeRepresentation: precipitationVolumeRepresentation,
+                                selectedTime: $selectedTime,
+                                usesCardBackground: false
+                            )
 
-                    if !precipitationAmounts.isEmpty {
-                        PrecipitationDetail(
-                            periods: hourlyPeriods,
-                            amounts: precipitationAmounts,
-                            unit: unit,
-                            precipitationVolumeRepresentation: precipitationVolumeRepresentation
-                        )
-                        .padding()
+                            if !chartPeriods.isEmpty {
+                                Divider()
+                                    .overlay(ForecastPalette.grid)
+                                    .padding(.horizontal)
+
+                                MeteogramCard(
+                                    title: "Hourly timeline",
+                                    periods: chartPeriods,
+                                    precipitationAmounts: chartPrecipitationAmounts,
+                                    rawPrecipitationAmounts: chartRawPrecipitationAmounts,
+                                    expectedPrecipitationAmounts: chartExpectedPrecipitationAmounts,
+                                    unit: unit,
+                                    forecastModel: forecastModel,
+                                    precipitationVolumeRepresentation: precipitationVolumeRepresentation,
+                                    selectedTime: $selectedTime,
+                                    usesCardBackground: false
+                                )
+                            }
+                        }
                         .glassCard()
+                    } else if !chartPeriods.isEmpty {
+                        MeteogramCard(
+                            title: "Hourly timeline",
+                            periods: chartPeriods,
+                            precipitationAmounts: chartPrecipitationAmounts,
+                            rawPrecipitationAmounts: chartRawPrecipitationAmounts,
+                            expectedPrecipitationAmounts: chartExpectedPrecipitationAmounts,
+                            unit: unit,
+                            forecastModel: forecastModel,
+                            precipitationVolumeRepresentation: precipitationVolumeRepresentation,
+                            selectedTime: $selectedTime
+                        )
                     }
 
                     Text(forecastModel.forecastAttribution)
@@ -1479,6 +1803,31 @@ private struct DayForecastDetailView: View {
         .foregroundStyle(ForecastPalette.ink)
         .navigationTitle(row.name)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var chartUsesHourlyData: Bool {
+        !hourlyPeriods.isEmpty
+    }
+
+    private var chartPeriods: [ForecastPeriod] {
+        if chartUsesHourlyData { return hourlyPeriods }
+        return [row.daytime, row.nighttime].compactMap { $0 }
+    }
+
+    private var chartPrecipitationAmounts: [PrecipitationAmount] {
+        chartUsesHourlyData ? precipitationAmounts : dailyPrecipitationAmounts
+    }
+
+    private var chartRawPrecipitationAmounts: [PrecipitationAmount] {
+        chartUsesHourlyData
+            ? rawHourlyPrecipitationAmounts
+            : rawDailyPrecipitationAmounts
+    }
+
+    private var chartExpectedPrecipitationAmounts: [PrecipitationAmount] {
+        chartUsesHourlyData
+            ? expectedHourlyPrecipitationAmounts
+            : expectedDailyPrecipitationAmounts
     }
 }
 
@@ -1547,6 +1896,11 @@ private struct DetailedPeriodCard: View {
 
 private struct DailyForecastSummary: View {
     let row: DailyForecastRow
+    let hourlyPeriods: [ForecastPeriod]
+    let rawHourlyPrecipitationAmounts: [PrecipitationAmount]
+    let expectedHourlyPrecipitationAmounts: [PrecipitationAmount]
+    let rawDailyPrecipitationAmounts: [PrecipitationAmount]
+    let expectedDailyPrecipitationAmounts: [PrecipitationAmount]
     let precipitationAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
     let timeZone: TimeZone
@@ -1575,7 +1929,13 @@ private struct DailyForecastSummary: View {
                 )
             case .histogram:
                 DailyPrecipitationHistogram(
-                    amounts: precipitationAmounts,
+                    periods: histogramPeriods,
+                    rawAmounts: histogramUsesHourlyData
+                        ? rawHourlyPrecipitationAmounts
+                        : rawDailyPrecipitationAmounts,
+                    expectedAmounts: histogramUsesHourlyData
+                        ? expectedHourlyPrecipitationAmounts
+                        : expectedDailyPrecipitationAmounts,
                     unit: unit,
                     timeZone: timeZone,
                     dayStart: row.calendarDayStart(in: timeZone),
@@ -1583,11 +1943,23 @@ private struct DailyForecastSummary: View {
                 )
             }
         }
+        .contentShape(Rectangle())
+    }
+
+    private var histogramUsesHourlyData: Bool {
+        !hourlyPeriods.isEmpty
+    }
+
+    private var histogramPeriods: [ForecastPeriod] {
+        if histogramUsesHourlyData { return hourlyPeriods }
+        return [row.daytime, row.nighttime].compactMap { $0 }
     }
 }
 
 private struct DailyPrecipitationHistogram: View {
-    let amounts: [PrecipitationAmount]
+    let periods: [ForecastPeriod]
+    let rawAmounts: [PrecipitationAmount]
+    let expectedAmounts: [PrecipitationAmount]
     let unit: TemperatureUnit
     let timeZone: TimeZone
     let dayStart: Date
@@ -1597,6 +1969,12 @@ private struct DailyPrecipitationHistogram: View {
         VStack(alignment: .trailing, spacing: 3) {
             HStack(alignment: .top, spacing: 4) {
                 GeometryReader { proxy in
+                    let expectedPath = smoothPath(
+                        through: expectedPoints(
+                            availableWidth: proxy.size.width,
+                            availableHeight: proxy.size.height
+                        )
+                    )
                     ZStack(alignment: .bottom) {
                         VStack(spacing: 0) {
                             Rectangle().frame(height: 1)
@@ -1607,20 +1985,43 @@ private struct DailyPrecipitationHistogram: View {
                         }
                         .foregroundStyle(ForecastPalette.grid.opacity(0.65))
 
-                        ForEach(dayAmounts) { amount in
-                            let width = barWidth(for: amount, availableWidth: proxy.size.width)
-                            let height = barHeight(for: amount, availableHeight: proxy.size.height)
+                        ForEach(dayPeriods) { period in
+                            let width = barWidth(for: period, availableWidth: proxy.size.width)
+                            let height = barHeight(for: period, availableHeight: proxy.size.height)
 
-                            if amount.millimeters > 0 {
+                            if rawVolume(for: period) > 0 {
                                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(ForecastPalette.precipitation)
+                                    .fill(ForecastPalette.precipitation.opacity(0.72))
                                     .frame(width: max(2, width - 1), height: height)
                                     .position(
-                                        x: barCenterX(for: amount, availableWidth: proxy.size.width),
+                                        x: periodCenterX(
+                                            for: period,
+                                            availableWidth: proxy.size.width
+                                        ),
                                         y: proxy.size.height - (height / 2)
                                     )
                             }
                         }
+
+                        expectedPath
+                            .stroke(
+                                ForecastPalette.expectedPrecipitationGlow,
+                                style: StrokeStyle(
+                                    lineWidth: 5,
+                                    lineCap: .round,
+                                    lineJoin: .round
+                                )
+                            )
+                        expectedPath
+                            .stroke(
+                                expectedPrecipitationGradient,
+                                style: StrokeStyle(
+                                    lineWidth: 2,
+                                    lineCap: .round,
+                                    lineJoin: .round
+                                )
+                            )
+
                     }
                     .background(ForecastPalette.grid.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -1646,15 +2047,15 @@ private struct DailyPrecipitationHistogram: View {
             }
 
             HStack(spacing: 4) {
-                if dayAmounts.isEmpty {
+                if dayPeriods.isEmpty {
                     Text("Unavailable")
                         .frame(maxWidth: .infinity, alignment: .center)
                 } else {
                     GeometryReader { proxy in
-                        ForEach(Array(axisDates.enumerated()), id: \.offset) { index, date in
+                        ForEach(axisDates, id: \.self) { date in
                             Text(formattedTime(date))
                                 .position(
-                                    x: proxy.size.width * CGFloat(index + 1) / 4,
+                                    x: axisX(for: date, availableWidth: proxy.size.width),
                                     y: proxy.size.height / 2
                                 )
                         }
@@ -1671,26 +2072,29 @@ private struct DailyPrecipitationHistogram: View {
             .frame(height: 10)
         }
         .frame(width: 152)
+        .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            dayAmounts.isEmpty
-                ? "Precipitation histogram unavailable"
-                : "24-hour precipitation histogram with 6 AM, 12 PM, and 6 PM axis marks, scale maximum \(formattedScaleAmount(scaleMaximumMillimeters))"
+            dayPeriods.isEmpty
+                ? "Daily weather histogram unavailable"
+                : "24-hour precipitation histogram. Blue bars show precipitation volume and cyan line shows expected precipitation. Scale maximum \(formattedScaleAmount(scaleMaximumMillimeters))."
         )
         .accessibilityIdentifier("daily-precipitation-histogram")
     }
 
     private var scaleMaximumMillimeters: Double {
         let minimum = unit == .celsius ? 0.1 : 0.01 * 25.4
-        let maximum = dayAmounts.map(plottedMillimeters).max() ?? 0
+        let maximum = dayPeriods.flatMap { period in
+            [rawVolume(for: period), expectedVolume(for: period)]
+        }.max() ?? 0
         return maximum > 0 ? maximum * 1.1 : minimum
     }
 
     private func barHeight(
-        for amount: PrecipitationAmount,
+        for period: ForecastPeriod,
         availableHeight: CGFloat
     ) -> CGFloat {
-        let millimeters = plottedMillimeters(for: amount)
+        let millimeters = rawVolume(for: period)
         guard millimeters > 0 else { return 0 }
         return min(
             availableHeight,
@@ -1698,8 +2102,10 @@ private struct DailyPrecipitationHistogram: View {
         )
     }
 
-    private var dayAmounts: [PrecipitationAmount] {
-        amounts.filter { $0.endTime > dayStart && $0.startTime < dayEnd }
+    private var dayPeriods: [ForecastPeriod] {
+        periods
+            .filter { $0.endTime > dayStart && $0.startTime < dayEnd }
+            .sorted { $0.startTime < $1.startTime }
     }
 
     private var dayDuration: TimeInterval {
@@ -1714,25 +2120,84 @@ private struct DailyPrecipitationHistogram: View {
         }
     }
 
-    private func barWidth(for amount: PrecipitationAmount, availableWidth: CGFloat) -> CGFloat {
-        let clippedStart = max(amount.startTime, dayStart)
-        let clippedEnd = min(amount.endTime, dayEnd)
+    private func barWidth(for period: ForecastPeriod, availableWidth: CGFloat) -> CGFloat {
+        let clippedStart = max(period.startTime, dayStart)
+        let clippedEnd = min(period.endTime, dayEnd)
         return availableWidth * max(clippedEnd.timeIntervalSince(clippedStart), 0) / dayDuration
     }
 
-    private func barCenterX(for amount: PrecipitationAmount, availableWidth: CGFloat) -> CGFloat {
-        let clippedStart = max(amount.startTime, dayStart)
+    private func periodCenterX(for period: ForecastPeriod, availableWidth: CGFloat) -> CGFloat {
+        let clippedStart = max(period.startTime, dayStart)
         let startOffset = clippedStart.timeIntervalSince(dayStart) / dayDuration
-        return availableWidth * startOffset + barWidth(for: amount, availableWidth: availableWidth) / 2
+        return availableWidth * startOffset
+            + barWidth(for: period, availableWidth: availableWidth) / 2
     }
 
-    private func plottedMillimeters(for amount: PrecipitationAmount) -> Double {
-        let fullDuration = amount.endTime.timeIntervalSince(amount.startTime)
-        guard fullDuration > 0 else { return 0 }
-        let clippedStart = max(amount.startTime, dayStart)
-        let clippedEnd = min(amount.endTime, dayEnd)
-        let overlap = max(clippedEnd.timeIntervalSince(clippedStart), 0)
-        return amount.millimeters * overlap / fullDuration
+    private func rawVolume(for period: ForecastPeriod) -> Double {
+        rawAmounts.precipitationVolume(during: period) ?? 0
+    }
+
+    private func expectedVolume(for period: ForecastPeriod) -> Double {
+        expectedAmounts.precipitationVolume(during: period) ?? 0
+    }
+
+    private func expectedPoints(
+        availableWidth: CGFloat,
+        availableHeight: CGFloat
+    ) -> [CGPoint] {
+        guard dayPeriods.contains(where: {
+            expectedAmounts.precipitationVolume(during: $0) != nil
+        }) else { return [] }
+
+        return dayPeriods.map { period in
+            let fraction = min(max(expectedVolume(for: period) / scaleMaximumMillimeters, 0), 1)
+            return CGPoint(
+                x: periodCenterX(for: period, availableWidth: availableWidth),
+                y: availableHeight * (1 - fraction)
+            )
+        }
+    }
+
+    private func smoothPath(through points: [CGPoint]) -> Path {
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        guard points.count > 1 else { return path }
+
+        for index in 0..<(points.count - 1) {
+            let start = points[index]
+            let end = points[index + 1]
+            let previous = index > 0 ? points[index - 1] : start
+            let next = index + 2 < points.count ? points[index + 2] : end
+            path.addCurve(
+                to: end,
+                control1: CGPoint(
+                    x: start.x + (end.x - previous.x) / 6,
+                    y: start.y + (end.y - previous.y) / 6
+                ),
+                control2: CGPoint(
+                    x: end.x - (next.x - start.x) / 6,
+                    y: end.y - (next.y - start.y) / 6
+                )
+            )
+        }
+        return path
+    }
+
+    private func axisX(for date: Date, availableWidth: CGFloat) -> CGFloat {
+        let offset = date.timeIntervalSince(dayStart) / dayDuration
+        return availableWidth * min(max(offset, 0), 1)
+    }
+
+    private var expectedPrecipitationGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                ForecastPalette.expectedPrecipitationStart,
+                ForecastPalette.expectedPrecipitation
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 
     private func formattedTime(_ date: Date) -> String {
@@ -1816,20 +2281,7 @@ private struct DailyIconTransition: View {
     }
 
     private func formattedVolume(during period: ForecastPeriod) -> String {
-        guard let millimeters = precipitationVolume(during: period) else { return "—" }
-
-        if unit == .celsius {
-            if millimeters == 0 { return "0mm" }
-            if millimeters < 0.1 { return "<.1mm" }
-            if millimeters < 10 { return String(format: "%.1fmm", millimeters) }
-            return String(format: "%.0fmm", millimeters)
-        }
-
-        let inches = millimeters / 25.4
-        if inches == 0 { return "0\"" }
-        if inches < 0.01 { return "<.01\"" }
-        if inches < 1 { return String(format: "%.2f\"", inches).replacingOccurrences(of: "0.", with: ".") }
-        return String(format: "%.1f\"", inches)
+        compactPrecipitationVolume(precipitationVolume(during: period), unit: unit)
     }
 
     private func accessibleVolume(during period: ForecastPeriod) -> String {
@@ -1844,10 +2296,16 @@ private struct DailyIconTransition: View {
     }
 
     private func precipitationVolume(during period: ForecastPeriod) -> Double? {
+        precipitationAmounts.precipitationVolume(during: period)
+    }
+}
+
+private extension Array where Element == PrecipitationAmount {
+    func precipitationVolume(during period: ForecastPeriod) -> Double? {
         var foundCoverage = false
-        let total = precipitationAmounts.reduce(0.0) { total, amount in
-            let overlapStart = max(period.startTime, amount.startTime)
-            let overlapEnd = min(period.endTime, amount.endTime)
+        let total = reduce(0.0) { total, amount in
+            let overlapStart = Swift.max(period.startTime, amount.startTime)
+            let overlapEnd = Swift.min(period.endTime, amount.endTime)
             guard overlapEnd > overlapStart else { return total }
 
             foundCoverage = true
@@ -1858,6 +2316,29 @@ private struct DailyIconTransition: View {
         }
         return foundCoverage ? total : nil
     }
+}
+
+private func compactPrecipitationVolume(
+    _ millimeters: Double?,
+    unit: TemperatureUnit
+) -> String {
+    guard let millimeters else { return "—" }
+
+    if unit == .celsius {
+        if millimeters == 0 { return "0mm" }
+        if millimeters < 0.1 { return "<.1mm" }
+        if millimeters < 10 { return String(format: "%.1fmm", millimeters) }
+        return String(format: "%.0fmm", millimeters)
+    }
+
+    let inches = millimeters / 25.4
+    if inches == 0 { return "0\"" }
+    if inches < 0.01 { return "<.01\"" }
+    if inches < 1 {
+        return String(format: "%.2f\"", inches)
+            .replacingOccurrences(of: "0.", with: ".")
+    }
+    return String(format: "%.1f\"", inches)
 }
 
 private struct DailyTemperaturePair: View {
@@ -1979,6 +2460,30 @@ private enum ForecastPalette {
     static let precipitation = adaptive(
         light: UIColor(red: 0.28, green: 0.66, blue: 0.96, alpha: 1),
         dark: UIColor(red: 0.4, green: 0.78, blue: 1, alpha: 1)
+    )
+    static let expectedPrecipitation = adaptive(
+        light: UIColor(red: 0.03, green: 0.68, blue: 0.76, alpha: 1),
+        dark: UIColor(red: 0.26, green: 0.9, blue: 0.94, alpha: 1)
+    )
+    static let expectedPrecipitationStart = adaptive(
+        light: UIColor(red: 0.02, green: 0.49, blue: 0.76, alpha: 1),
+        dark: UIColor(red: 0.2, green: 0.7, blue: 1, alpha: 1)
+    )
+    static let expectedPrecipitationGlow = adaptive(
+        light: UIColor(red: 0.02, green: 0.63, blue: 0.79, alpha: 0.15),
+        dark: UIColor(red: 0.24, green: 0.84, blue: 0.98, alpha: 0.2)
+    )
+    static let temperatureStart = adaptive(
+        light: UIColor(red: 0.94, green: 0.25, blue: 0.42, alpha: 1),
+        dark: UIColor(red: 1, green: 0.4, blue: 0.55, alpha: 1)
+    )
+    static let temperatureEnd = adaptive(
+        light: UIColor(red: 1, green: 0.55, blue: 0.22, alpha: 1),
+        dark: UIColor(red: 1, green: 0.68, blue: 0.3, alpha: 1)
+    )
+    static let temperatureGlow = adaptive(
+        light: UIColor(red: 0.98, green: 0.34, blue: 0.38, alpha: 0.16),
+        dark: UIColor(red: 1, green: 0.5, blue: 0.4, alpha: 0.22)
     )
     static let lowTemperature = adaptive(
         light: UIColor(red: 0.34, green: 0.29, blue: 0.7, alpha: 1),

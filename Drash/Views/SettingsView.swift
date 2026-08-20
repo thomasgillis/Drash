@@ -107,7 +107,7 @@ struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(
-                "Expected precipitation weights the model volume by its precipitation chance for the same interval. For example, 0.10 in at 40% is displayed as 0.04 in. Raw volume shows the unweighted amount supplied by the selected model. This setting changes volume bars and totals, but not the displayed rain percentages."
+                "Expected precipitation weights the model volume by its precipitation chance for the same interval. For example, 0.10 in at 40% is displayed as 0.04 in. Raw volume shows the unweighted amount supplied by the selected model. This setting changes summary values and totals. The 24-hour chart always compares blue raw-volume bars with a cyan expected-amount line."
             )
         }
     }

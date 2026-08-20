@@ -76,13 +76,23 @@ final class DrashUITests: XCTestCase {
         tabBar.buttons["Forecast"].tap()
         let hourlySummary = app.buttons["Next 24 hours"]
         XCTAssertTrue(hourlySummary.waitForExistence(timeout: 35))
+        XCTAssertTrue(
+            app.descendants(matching: .any).matching(
+                NSPredicate(
+                    format: "label CONTAINS[c] %@ AND label CONTAINS[c] %@",
+                    "percent precipitation chance",
+                    "precipitation volume"
+                )
+            ).firstMatch.waitForExistence(timeout: 5)
+        )
         let forecastScrollView = app.scrollViews["forecast-scroll-view"]
         for _ in 0..<5 where !hourlySummary.isHittable {
             forecastScrollView.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(hourlySummary.isHittable)
         hourlySummary.tap()
-        XCTAssertTrue(app.staticTexts["Precipitation volume"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Volume"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Expected"].exists)
 
         tabBar.buttons["Settings"].tap()
         XCTAssertTrue(expectedPrecipitation.waitForExistence(timeout: 5))
@@ -126,6 +136,9 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(histogramMode.waitForExistence(timeout: 35))
         histogramMode.tap()
         XCTAssertTrue(histogram.waitForExistence(timeout: 35))
+        let histogramLabel = histogram.label.lowercased()
+        XCTAssertTrue(histogramLabel.contains("blue bars show precipitation volume"))
+        XCTAssertTrue(histogramLabel.contains("cyan line shows expected precipitation"))
 
         for (modelName, modelID) in [("NWS", "nws"), ("HRRR", "hrrr")] {
             let modelButton = app.buttons[modelName]
@@ -145,6 +158,137 @@ final class DrashUITests: XCTestCase {
             screenshot.lifetime = .keepAlways
             add(screenshot)
         }
+
+        let forecastInfo = app.buttons["About forecast models and histogram"]
+        XCTAssertTrue(forecastInfo.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !forecastInfo.isHittable {
+            forecastScrollView.swipeDown(velocity: .slow)
+        }
+        XCTAssertTrue(forecastInfo.isHittable)
+        forecastInfo.tap()
+        XCTAssertTrue(app.staticTexts["Histogram key"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Precipitation volume"].exists)
+        XCTAssertTrue(app.staticTexts["Expected precipitation"].exists)
+    }
+
+    func testHourlyForecastScrollMovesTimelineSelection() throws {
+        let hourlySummary = app.buttons["Next 24 hours"]
+        XCTAssertTrue(hourlySummary.waitForExistence(timeout: 35))
+
+        let forecastScrollView = app.scrollViews["forecast-scroll-view"]
+        XCTAssertTrue(forecastScrollView.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !hourlySummary.isHittable {
+            forecastScrollView.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(hourlySummary.isHittable)
+        hourlySummary.tap()
+
+        let hourlyStrip = app.scrollViews["hourly-forecast-strip"].firstMatch
+        XCTAssertTrue(hourlyStrip.waitForExistence(timeout: 5))
+        XCTAssertTrue(hourlyStrip.isHittable)
+
+        let chart = app.descendants(matching: .any)
+            .matching(identifier: "temperature-precipitation-chart")
+            .firstMatch
+        XCTAssertTrue(chart.waitForExistence(timeout: 5))
+        XCTAssertEqual(chart.value as? String, "No time selected")
+
+        hourlyStrip.swipeLeft()
+        let synchronizedSelection = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (chart.value as? String)?.contains("Selected") == true
+            },
+            object: chart
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [synchronizedSelection], timeout: 3),
+            .completed
+        )
+
+        let centeredHourBeforeChartSelection = hourlyStrip.value as? String
+        for _ in 0..<6 where !chart.isHittable {
+            forecastScrollView.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(chart.isHittable)
+        chart.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.55)).tap()
+
+        let synchronizedForecastStrip = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                guard let centeredHour = hourlyStrip.value as? String else { return false }
+                return centeredHour.hasPrefix("Centered hour")
+                    && centeredHour != centeredHourBeforeChartSelection
+            },
+            object: hourlyStrip
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [synchronizedForecastStrip], timeout: 3),
+            .completed
+        )
+    }
+
+    func testDailyDetailShowsFullTemperatureAndPrecipitationTimeline() throws {
+        let forecastScrollView = app.scrollViews["forecast-scroll-view"]
+        XCTAssertTrue(forecastScrollView.waitForExistence(timeout: 35))
+
+        var firstDailyForecast = app.buttons.matching(
+            NSPredicate(format: "identifier MATCHES %@", "daily-forecast-[0-9]+")
+        ).firstMatch
+        for _ in 0..<10 where !firstDailyForecast.isHittable {
+            forecastScrollView.swipeUp(velocity: .slow)
+            firstDailyForecast = app.buttons.matching(
+                NSPredicate(format: "identifier MATCHES %@", "daily-forecast-[0-9]+")
+            ).firstMatch
+        }
+        XCTAssertTrue(firstDailyForecast.isHittable)
+        firstDailyForecast.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)
+        ).tap()
+        XCTAssertTrue(app.staticTexts["Detailed forecast"].waitForExistence(timeout: 5))
+
+        let hourlyStrip = app.scrollViews["hourly-forecast-strip"].firstMatch
+        for _ in 0..<8 where !hourlyStrip.isHittable {
+            app.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(hourlyStrip.isHittable)
+
+        let synchronizedChart = app.descendants(matching: .any)
+            .matching(identifier: "temperature-precipitation-chart")
+            .firstMatch
+        XCTAssertTrue(synchronizedChart.waitForExistence(timeout: 5))
+        hourlyStrip.swipeLeft()
+        let synchronizedSelection = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (synchronizedChart.value as? String)?.contains("Selected") == true
+            },
+            object: synchronizedChart
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [synchronizedSelection], timeout: 3),
+            .completed
+        )
+
+        let hourlyTimeline = app.staticTexts["Hourly timeline"]
+        for _ in 0..<8 where !hourlyTimeline.isHittable {
+            app.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(hourlyTimeline.isHittable)
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "label BEGINSWITH %@", "Temperature ")
+            ).firstMatch.exists
+        )
+        XCTAssertTrue(app.staticTexts["Volume"].exists)
+        XCTAssertTrue(app.staticTexts["Expected"].exists)
+        XCTAssertTrue(
+            app.descendants(matching: .any)
+                .matching(identifier: "temperature-precipitation-chart")
+                .firstMatch.exists
+        )
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Full daily temperature and precipitation timeline"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testForecastFavoritesUnitsRadarPlacesAndCacheRelaunch() throws {
@@ -244,8 +388,8 @@ final class DrashUITests: XCTestCase {
         precipitationScreenshot.lifetime = .keepAlways
         add(precipitationScreenshot)
 
-        let firstDailyForecast = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "daily-forecast-")
+        let firstDailyForecast = app.buttons.matching(
+            NSPredicate(format: "identifier MATCHES %@", "daily-forecast-[0-9]+")
         ).firstMatch
         XCTAssertTrue(firstDailyForecast.waitForExistence(timeout: 5))
         for _ in 0..<3 where !firstDailyForecast.isHittable {
@@ -256,6 +400,18 @@ final class DrashUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Detailed forecast"].waitForExistence(timeout: 5))
         XCTAssertTrue(
             app.staticTexts["Day"].exists || app.staticTexts["Night"].exists
+        )
+        let hourlyTimeline = app.staticTexts["Hourly timeline"]
+        for _ in 0..<8 where !hourlyTimeline.isHittable {
+            app.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(hourlyTimeline.isHittable)
+        XCTAssertTrue(app.staticTexts["Volume"].exists)
+        XCTAssertTrue(app.staticTexts["Expected"].exists)
+        XCTAssertTrue(
+            app.descendants(matching: .any)
+                .matching(identifier: "temperature-precipitation-chart")
+                .firstMatch.exists
         )
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.staticTexts["7-day forecast"].waitForExistence(timeout: 5))
@@ -350,6 +506,8 @@ final class DrashUITests: XCTestCase {
             .matching(identifier: "temperature-precipitation-chart")
             .firstMatch
         XCTAssertTrue(chart.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Volume"].exists)
+        XCTAssertTrue(app.staticTexts["Expected"].exists)
         for _ in 0..<6 where !chart.isHittable {
             forecastScrollView.swipeUp(velocity: .slow)
         }
